@@ -473,3 +473,76 @@ test("_applySglangPrefillSplit does not clobber server_info tok/s", () => {
   assert.equal(probe.lastTokenCounts.output, 150);
   assert.equal(probe.cachedPrefillTps, 0); // first split sample seeds
 });
+
+test("_applySglangPrefillSplit: realtime prefill counters update the main rate", () => {
+  const probe = new LlmProbe({ lanIp: "10.0.0.1" }, 30000);
+  probe.slotsActive = 1;
+  const metrics = (computed, cached) =>
+    [
+      `sglang:realtime_tokens_total{mode="prefill_compute"} ${computed}`,
+      `sglang:realtime_tokens_total{mode="prefill_cache"} ${cached}`,
+    ].join("\n") + "\n";
+
+  const originalNow = Date.now;
+  let now = 1000;
+  Date.now = () => now;
+  try {
+    probe._applySglangPrefillSplit(metrics(100, 400), 2);
+    assert.equal(probe.prefillTps, 0); // 首个计数器样本只建立基线
+
+    now = 16000; // 指标实际每 15 秒批量更新，而不是每 2 秒轮询更新
+    probe._applySglangPrefillSplit(metrics(300, 500), 2);
+    assert.equal(probe.prefillTps, 13.33); // (300 - 100) / 15，仅计算型 token
+    assert.equal(probe.uncachedPrefillTps, 13.33);
+    assert.equal(probe.cachedPrefillTps, 6.67); // (500 - 400) / 15
+
+    now = 18000;
+    probe._applySglangPrefillSplit(metrics(300, 500), 2);
+    assert.equal(probe.prefillTps, 13.33); // 6 秒内保留最近一次真实样本，避免一闪而过
+    assert.equal(probe.uncachedPrefillTps, 13.33);
+
+    now = 23001;
+    probe._applySglangPrefillSplit(metrics(300, 500), 2);
+    assert.equal(probe.prefillTps, 0); // 超过展示窗口后归零
+    assert.equal(probe.uncachedPrefillTps, 0);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("_applySglangMetrics: realtime prefill is visible before decode starts", () => {
+  const probe = new LlmProbe({ lanIp: "10.0.0.1" }, 30000);
+  const metrics = (computed, cached) =>
+    [
+      "sglang:generation_tokens_total 10",
+      "sglang:prompt_tokens_total 100",
+      `sglang:realtime_tokens_total{mode="prefill_compute"} ${computed}`,
+      `sglang:realtime_tokens_total{mode="prefill_cache"} ${cached}`,
+      "sglang:num_running_reqs 1",
+    ].join("\n") + "\n";
+  const originalNow = Date.now;
+  let now = 1000;
+  Date.now = () => now;
+  try {
+    probe._applySglangMetrics(metrics(100, 400), 2);
+    now = 16000;
+    probe._applySglangMetrics(metrics(300, 500), 2);
+    assert.equal(probe.prefillTps, 13.33);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("_applySglangMetrics: native generation gauge wins over batched counter delta", () => {
+  const probe = new LlmProbe({ lanIp: "10.0.0.1" }, 30000);
+  probe.lastTokenCounts.output = 10;
+  probe._applySglangMetrics(
+    [
+      "sglang:generation_tokens_total 1010",
+      "sglang:gen_throughput 38.5",
+      "sglang:prompt_tokens_total 100",
+    ].join("\n") + "\n",
+    0.1
+  );
+  assert.equal(probe.generationTps, 38.5); // 不把批量增量 1000 / 0.1 算成尖峰
+});

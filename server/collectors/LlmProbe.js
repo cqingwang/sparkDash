@@ -16,6 +16,8 @@ const REDETECT_INTERVAL_MS = 60_000;
  * expire back to 0 if it stops changing.
  */
 const SGLANG_STICKY_TPS_LIVE_MS = 6_000;
+/** SGLang prefill 计数器按批次更新；短暂保留真实样本，避免界面一闪而过。 */
+const SGLANG_PREFILL_TPS_LIVE_MS = 6_000;
 
 /**
  * Prefer a short model id when the server returns a Hugging Face hub cache path.
@@ -87,6 +89,10 @@ export class LlmProbe {
     this.lastTokenCounts = { input: 0, output: 0 };
     /** Previous prefill counters by kind; null until first labeled sample. */
     this.lastPrefillKinds = null;
+    /** Previous modern SGLang realtime prefill counters and change timestamp. */
+    this.lastSglangRealtimeKinds = null;
+    this.lastSglangRealtimeChangeAt = 0;
+    this.lastSglangRealtimePrefillRateAt = 0;
     /** Previous vLLM TTFT histogram `_sum` (seconds). null until first sample. */
     this.lastTtftSum = null;
     /** Previous `vllm:iteration_tokens_total_sum` (engine-step tokens). */
@@ -247,6 +253,9 @@ export class LlmProbe {
     this.slotState.clear();
     this.lastTokenCounts = { input: 0, output: 0 };
     this.lastPrefillKinds = null;
+    this.lastSglangRealtimeKinds = null;
+    this.lastSglangRealtimeChangeAt = 0;
+    this.lastSglangRealtimePrefillRateAt = 0;
     this.lastTtftSum = null;
     this.lastIterSum = null;
     this._sglangStickyTps = null;
@@ -967,6 +976,9 @@ export class LlmProbe {
     const prompt =
       this._getPromMetric(txt, "sglang:prompt_tokens_total") ??
       this._getPromMetric(txt, "sglang_prompt_tokens_total");
+    const realtimeGeneration =
+      this._getPromMetric(txt, "sglang:gen_throughput") ??
+      this._getPromMetric(txt, "sglang_gen_throughput");
     if (gen == null) {
       const gauge =
         this._getPromMetric(txt, "sglang:gen_throughput") ??
@@ -977,7 +989,9 @@ export class LlmProbe {
       return;
     }
 
-    if (dtSec > 0 && dtSec < 10) {
+    if (realtimeGeneration != null) {
+      this.generationTps = Math.max(0, Math.round(realtimeGeneration * 100) / 100);
+    } else if (dtSec > 0 && dtSec < 10) {
       const deltaOut = gen - this.lastTokenCounts.output;
       this.generationTps = Math.max(0, Math.round((deltaOut / dtSec) * 100) / 100);
       if (prompt != null) {
@@ -999,6 +1013,23 @@ export class LlmProbe {
       this.slotsActive = Math.round(running);
     }
 
+    const realtimeComputed = this._getPromMetricLabeled(
+      txt,
+      "sglang:realtime_tokens_total",
+      "mode",
+      "prefill_compute"
+    );
+    const realtimeCached = this._getPromMetricLabeled(
+      txt,
+      "sglang:realtime_tokens_total",
+      "mode",
+      "prefill_cache"
+    );
+    if (realtimeComputed != null && realtimeCached != null) {
+      this._setSglangRealtimePrefillRates(realtimeCached, realtimeComputed);
+      return;
+    }
+
     const cached = this._sglangCachedTokens(txt);
     if (cached != null && prompt != null) {
       this._setPrefillSplitRates(cached, prompt, dtSec);
@@ -1010,6 +1041,23 @@ export class LlmProbe {
    * Prefers cache_source="device" so HiCache L1/L2/L3 labels are not summed.
    */
   _applySglangPrefillSplit(txt, dtSec) {
+    const realtimeComputed = this._getPromMetricLabeled(
+      txt,
+      "sglang:realtime_tokens_total",
+      "mode",
+      "prefill_compute"
+    );
+    const realtimeCached = this._getPromMetricLabeled(
+      txt,
+      "sglang:realtime_tokens_total",
+      "mode",
+      "prefill_cache"
+    );
+    if (realtimeComputed != null && realtimeCached != null) {
+      this._setSglangRealtimePrefillRates(realtimeCached, realtimeComputed);
+      return;
+    }
+
     const prompt =
       this._getPromMetric(txt, "sglang:prompt_tokens_total") ??
       this._getPromMetric(txt, "sglang_prompt_tokens_total");
@@ -1017,6 +1065,54 @@ export class LlmProbe {
     if (cached != null && prompt != null) {
       this._setPrefillSplitRates(cached, prompt, dtSec);
     }
+  }
+
+  /**
+   * Modern SGLang updates realtime counters in log batches, not every HTTP
+   * scrape. Rate them over the interval between counter changes; dividing a
+   * batch by the 2-second dashboard poll interval can create fake spikes.
+   * A poll with no counter delta is idle for prefill and must clear the live
+   * rate even when a request is still decoding.
+   */
+  _setSglangRealtimePrefillRates(cachedCount, computedCount) {
+    const now = Date.now();
+    const previous = this.lastSglangRealtimeKinds;
+    if (previous == null) {
+      this.lastSglangRealtimeKinds = { cached: cachedCount, computed: computedCount };
+      this.lastSglangRealtimeChangeAt = now;
+      this.cachedPrefillTps = 0;
+      this.uncachedPrefillTps = 0;
+      this.prefillTps = 0;
+      this.lastSglangRealtimePrefillRateAt = 0;
+      return;
+    }
+
+    const deltaCached = cachedCount - previous.cached;
+    const deltaComputed = computedCount - previous.computed;
+    if (deltaCached < 0 || deltaComputed < 0) {
+      this.lastSglangRealtimeKinds = { cached: cachedCount, computed: computedCount };
+      this.lastSglangRealtimeChangeAt = now;
+      this.cachedPrefillTps = 0;
+      this.uncachedPrefillTps = 0;
+      this.prefillTps = 0;
+      this.lastSglangRealtimePrefillRateAt = 0;
+      return;
+    }
+
+    const elapsedSec = (now - this.lastSglangRealtimeChangeAt) / 1000;
+    const hasDelta = deltaCached > 0 || deltaComputed > 0;
+    if (hasDelta && elapsedSec > 0) {
+      this.cachedPrefillTps = Math.max(0, Math.round((deltaCached / elapsedSec) * 100) / 100);
+      this.uncachedPrefillTps = Math.max(0, Math.round((deltaComputed / elapsedSec) * 100) / 100);
+      this._setPrefillTps(this.uncachedPrefillTps, this._sglangInflight());
+      this.lastSglangRealtimePrefillRateAt = now;
+      this.lastSglangRealtimeChangeAt = now;
+    } else if (now - this.lastSglangRealtimePrefillRateAt >= SGLANG_PREFILL_TPS_LIVE_MS) {
+      this.cachedPrefillTps = 0;
+      this.uncachedPrefillTps = 0;
+      this.prefillTps = 0;
+    }
+    this.lastSglangRealtimeKinds = { cached: cachedCount, computed: computedCount };
   }
 
   _sglangCachedTokens(txt) {
