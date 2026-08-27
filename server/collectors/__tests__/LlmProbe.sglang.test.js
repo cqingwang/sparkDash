@@ -37,19 +37,18 @@ test("normalizeModelId: huggingface/hub cache path with hub/ segment", () => {
   );
 });
 
-test("applyModelRef via sglang info: hub path → short id, no modelPath clutter", () => {
+test("SGLang server info does not replace the API model id with an internal path", () => {
   const probe = new LlmProbe({ lanIp: "10.0.0.1" }, 30000);
+  probe.modelId = "RadixArk/Qwen3.8-Flash-Next-NVFP4";
   probe._applySglangServerInfo(
     {
-      model_path:
-        "/root/.cache/huggingface/hub/models--deepseek-ai--DeepSeek-V4-Flash-0731/snapshots/abc",
+      model_path: "/models/RadixArk/Qwen3.8-Flash-Next-NVFP4",
       context_length: 128000,
       internal_states: [{ last_gen_throughput: 0 }],
     },
     2
   );
-  assert.equal(probe.modelId, "deepseek-ai/DeepSeek-V4-Flash-0731");
-  assert.equal(probe.modelPath, null);
+  assert.equal(probe.modelId, "RadixArk/Qwen3.8-Flash-Next-NVFP4");
 });
 
 test("_probeIsSglang: true when /get_server_info returns JSON object", async () => {
@@ -180,8 +179,6 @@ test("_applySglangServerInfo: last_gen_throughput when no total_* counters", () 
     context_length: 1048576,
     max_total_num_tokens: 2178048,
     max_running_requests: 16,
-    model_path:
-      "/root/.cache/huggingface/models--thinkingmachines--Inkling-Small-NVFP4/snapshots/abc",
     internal_states: [{ last_gen_throughput: 29.746 }],
   };
   // First sample seeds sticky gauge but stays 0 (stale leftover)
@@ -189,7 +186,7 @@ test("_applySglangServerInfo: last_gen_throughput when no total_* counters", () 
   assert.equal(probe.generationTps, 0);
   assert.equal(probe.contextLength, 1048576);
   assert.equal(probe.slotsTotal, 16);
-  assert.equal(probe.modelId, "thinkingmachines/Inkling-Small-NVFP4");
+  assert.equal(probe.modelId, null);
 
   // Unchanged sticky value → still 0
   probe._applySglangServerInfo(info, 2);

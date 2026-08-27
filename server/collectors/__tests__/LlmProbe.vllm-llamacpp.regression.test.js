@@ -256,7 +256,6 @@ test("llama.cpp probe: slot deltas → tok/s; props for model", async () => {
   const snap = await probe.probe();
   assert.equal(snap.backend, "llama.cpp");
   assert.equal(snap.modelId, "Qwen2.5-7B");
-  assert.equal(snap.modelPath, "/models/qwen.gguf");
   assert.equal(snap.contextLength, 32768);
   assert.equal(snap.slotsTotal, 1);
   assert.equal(snap.slotsActive, 1);

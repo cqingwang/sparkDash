@@ -40,24 +40,6 @@ export function normalizeModelId(id) {
   return s;
 }
 
-/** True when `id` looks like a Hugging Face hub cache directory (models--org--name). */
-export function isHfHubCachePath(id) {
-  if (id == null) return false;
-  return /(?:^|\/)models--[^/]+/.test(String(id));
-}
-
-/**
- * Set modelId (always normalized) and modelPath (omit HF hub cache paths —
- * they duplicate the short id and clutter the LLM panel).
- * @param {unknown} raw
- */
-function applyModelRef(probe, raw) {
-  if (raw == null || raw === "") return;
-  const s = String(raw);
-  probe.modelId = normalizeModelId(s);
-  probe.modelPath = isHfHubCachePath(s) ? null : s;
-}
-
 export class LlmProbe {
   constructor(spark, port = 8888) {
     this.spark = spark;
@@ -71,7 +53,6 @@ export class LlmProbe {
     this.authOpen = null;
     this.stepId = 0;
     this.modelId = null;
-    this.modelPath = null;
     this.contextLength = null;
     this.gpuMemoryUtilization = null;
     this.slotsActive = 0;
@@ -231,7 +212,6 @@ export class LlmProbe {
     this.backendType = null;
     this.authOpen = null;
     this.modelId = null;
-    this.modelPath = null;
     this.generationTps = 0;
     this.prefillTps = 0;
     this.cachedPrefillTps = null;
@@ -423,8 +403,6 @@ export class LlmProbe {
         const modelsData = await modelsRes.json();
         const model = modelsData?.data?.[0];
         this.modelId = normalizeModelId(model?.id || null);
-        // Drop HF hub cache paths from modelPath if /v1/models id was a cache dir
-        if (isHfHubCachePath(model?.id)) this.modelPath = null;
         // ds4-server uses context_length; vLLM uses max_model_len
         this.contextLength =
           model?.max_model_len ?? model?.context_length ?? this.contextLength;
@@ -496,7 +474,6 @@ export class LlmProbe {
       } catch {
         /* metrics optional */
       }
-      await this._enrichSglangModelInfo();
       return this._getSnapshot();
     }
 
@@ -771,10 +748,6 @@ export class LlmProbe {
         LlmProbe._positiveNumber(sgData.max_req_input_len) ??
         LlmProbe._positiveNumber(sgData.max_total_num_tokens) ??
         null;
-    }
-
-    if (sgData.model_path) {
-      applyModelRef(this, sgData.model_path);
     }
 
     const maxRunning = Number(sgData.max_running_requests);
@@ -1124,23 +1097,6 @@ export class LlmProbe {
     );
   }
 
-  /** Prefer SGLang /get_model_info (or /model_info) over raw HF cache paths. */
-  async _enrichSglangModelInfo() {
-    for (const path of ["/get_model_info", "/model_info"]) {
-      try {
-        const res = await this._fetch(`${this.baseUrl}${path}`);
-        if (!res.ok) continue;
-        const data = await res.json();
-        const raw = data?.model_path || data?.tokenizer_path;
-        if (!raw) continue;
-        applyModelRef(this, raw);
-        return;
-      } catch {
-        /* try next */
-      }
-    }
-  }
-
   // ─── llama.cpp native path ────────────────────────────────
   async _probeLlamaCpp() {
     const now = Date.now();
@@ -1208,12 +1164,7 @@ export class LlmProbe {
       const propsRes = await this._fetch(`${this.baseUrl}/props`);
       if (propsRes.ok) {
         const props = await propsRes.json();
-        const raw = props.model_alias || props.model_path || this.modelId;
-        if (props.model_path && !isHfHubCachePath(props.model_path)) {
-          this.modelPath = props.model_path;
-        } else if (isHfHubCachePath(props.model_path) || isHfHubCachePath(props.model_alias)) {
-          this.modelPath = null;
-        }
+        const raw = props.model_alias || this.modelId;
         if (raw) this.modelId = normalizeModelId(raw);
         this.contextLength = props.total_context_length || props.context_length || this.contextLength;
       }
@@ -1446,7 +1397,6 @@ export class LlmProbe {
       available: metricsLive,
       backend: this.backendType,
       modelId: this.modelId || null,
-      modelPath: this.modelPath || null,
       contextLength: this.contextLength,
       gpuMemoryUtilization: this.gpuMemoryUtilization,
       slotsActive: this.slotsActive,
@@ -1475,7 +1425,6 @@ export class LlmProbe {
       available: false,
       backend: this.backendType,
       modelId: null,
-      modelPath: null,
       contextLength: null,
       gpuMemoryUtilization: null,
       slotsActive: 0,

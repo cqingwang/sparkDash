@@ -441,14 +441,6 @@ export function LlmPanel({
             )}
             <span className="shrink-0 font-tabular text-[10px] text-muted">:{llmPort}</span>
           </div>
-          {llm?.modelPath &&
-            llm.modelPath !== llm.modelId &&
-            !llm.modelPath.includes("models--") && (
-            <div className="-mt-1.5 truncate text-[10px] text-muted" title={llm.modelPath}>
-              {llm.modelPath}
-            </div>
-          )}
-
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted">Generation tok/s</span>
             <div className="flex items-center gap-2">
