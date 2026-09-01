@@ -10,6 +10,9 @@ import { llmProbeHost } from "./llmHost.js";
 
 const FAIL_RESET_THRESHOLD = 3;
 const REDETECT_INTERVAL_MS = 60_000;
+/** Current SGLang names first. Deprecated aliases still work but log a warning per hit. */
+const SGLANG_SERVER_INFO_PATHS = ["/server_info", "/get_server_info"];
+const SGLANG_MODEL_INFO_PATHS = ["/model_info", "/get_model_info"];
 /**
  * SGLang's last_gen_throughput is a sticky gauge (holds last decode rate when
  * idle). Only treat it as live after we observe a change between polls, and
@@ -351,19 +354,28 @@ export class LlmProbe {
     return data.ok === true && typeof data.busy === "boolean";
   }
 
-  /** True when SGLang native server-info endpoints respond. */
-  async _probeIsSglang() {
-    for (const path of ["/get_server_info", "/server_info"]) {
+  /**
+   * First successful SGLang JSON from `paths` (current name, then deprecated alias).
+   * @param {string[]} paths
+   * @returns {Promise<object|null>}
+   */
+  async _fetchSglangJson(paths) {
+    for (const path of paths) {
       try {
         const res = await this._fetch(`${this.baseUrl}${path}`);
         if (!res.ok) continue;
         const data = await res.json().catch(() => null);
-        if (data && typeof data === "object" && !Array.isArray(data)) return true;
+        if (data && typeof data === "object" && !Array.isArray(data)) return data;
       } catch {
         /* try next */
       }
     }
-    return false;
+    return null;
+  }
+
+  /** True when SGLang native server-info endpoints respond. */
+  async _probeIsSglang() {
+    return (await this._fetchSglangJson(SGLANG_SERVER_INFO_PATHS)) != null;
   }
 
   /** True when Prometheus /metrics exposes ds4-server series (ds4-on-spark). */
@@ -443,26 +455,24 @@ export class LlmProbe {
     }
 
     // SGLang: native info endpoints. Skip on known vLLM/ds4 to avoid 404 spam.
+    // Prefer /server_info — /get_server_info is a deprecated alias that logs every poll.
     if (this.backendType === "sglang" || this.backendType == null) {
-      try {
-        const sgRes = await this._fetch(`${this.baseUrl}/get_server_info`);
-        if (sgRes.ok) {
-          this.backendType = "sglang";
-          const sgData = await sgRes.json();
-          // Load before last_gen_throughput so inflight can keep a steady rate live.
-          await this._probeSglangLoad();
-          this._applySglangServerInfo(sgData, dtSec);
-          // Engine tile: Active vs Sleeping. SGLang has no live sleep gauge
-          // (sleep_on_idle is a launch flag, not current state). A reachable
-          // server with weights resident is Active / ready.
-          if (this.gpuMemoryUtilization == null) this.gpuMemoryUtilization = 1;
-        }
-      } catch {}
+      const sgData = await this._fetchSglangJson(SGLANG_SERVER_INFO_PATHS);
+      if (sgData) {
+        this.backendType = "sglang";
+        // Load before last_gen_throughput so inflight can keep a steady rate live.
+        await this._probeSglangLoad();
+        this._applySglangServerInfo(sgData, dtSec);
+        // Engine tile: Active vs Sleeping. SGLang has no live sleep gauge
+        // (sleep_on_idle is a launch flag, not current state). A reachable
+        // server with weights resident is Active / ready.
+        if (this.gpuMemoryUtilization == null) this.gpuMemoryUtilization = 1;
+      }
     }
 
     if (this.backendType === "sglang") {
       // Prometheus is optional (--enable-metrics). Do not mix those counters
-      // into lastTokenCounts when /get_server_info already produced live rates.
+      // into lastTokenCounts when server-info already produced live rates.
       try {
         const metricsRes = await this._fetch(`${this.baseUrl}/metrics`);
         if (metricsRes.ok) {
@@ -726,7 +736,7 @@ export class LlmProbe {
   }
 
   /**
-   * Apply SGLang /get_server_info.
+   * Apply SGLang /server_info (or deprecated /get_server_info).
    * Older builds expose total_input_tokens / total_output_tokens.
    * Current builds (metrics often off) expose sticky last_gen_throughput under
    * internal_states[i]. Only treat it as live after the value changes between
@@ -1095,6 +1105,23 @@ export class LlmProbe {
       this._getPromMetricMax(txt, "sglang:cached_tokens_total") ??
       this._getPromMetricMax(txt, "sglang_cached_tokens_total")
     );
+  }
+
+  /** Prefer SGLang /model_info (or deprecated /get_model_info) over raw HF cache paths. */
+  async _enrichSglangModelInfo() {
+    for (const path of SGLANG_MODEL_INFO_PATHS) {
+      try {
+        const res = await this._fetch(`${this.baseUrl}${path}`);
+        if (!res.ok) continue;
+        const data = await res.json();
+        const raw = data?.model_path || data?.tokenizer_path;
+        if (!raw) continue;
+        applyModelRef(this, raw);
+        return;
+      } catch {
+        /* try next */
+      }
+    }
   }
 
   // ─── llama.cpp native path ────────────────────────────────
