@@ -394,8 +394,8 @@ function AddButton({ onAdd }: { onAdd: () => void }) {
     <button
       type="button"
       onClick={onAdd}
-      title="Add Spark/GPU Host"
-      aria-label="Add Spark/GPU Host"
+      title="Add"
+      aria-label="Add"
       className="pill-add shrink-0"
     >
       <PlusIcon className="h-3.5 w-3.5" />
@@ -521,7 +521,7 @@ function MobileSparkMenu({
         onClick={handleAddClick}
       >
         <PlusIcon className="h-3.5 w-3.5" />
-        Add Spark/GPU Host
+        Add
       </button>
     </div>
   );
