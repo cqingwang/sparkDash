@@ -159,22 +159,22 @@
    AFTER theme blocks so --radius-* wins on source order (equal specificity). */
 :root,
 [data-density="compact"] {
-  --density-root-font: 112%;
-  --density-shell-pad: 20px;
-  --density-header-gap: 16px;
-  --density-page-gap: 10px;
-  --density-panel-pad: 13px;
+  --density-root-font: 70%;
+  --density-shell-pad: 10px;
+  --density-header-gap: 5px;
+  --density-page-gap: 5px;
+  --density-panel-pad: 10px;
   --density-panel-title-mb: 9px;
   --density-card-pad: 14px;
-  --density-card-gap: 8px;
-  --density-overview-rhythm: 16px;
-  --density-overview-title: 24px;
-  --radius-panel: 14px;
+  --density-card-gap: 4px;
+  --density-overview-rhythm: 8px;
+  --density-overview-title: 20px;
+  --radius-panel: 6px;
   --radius-sm: 8px;
 }
 
 [data-density="comfortable"] {
-  --density-root-font: 121%;
+  --density-root-font: 70%;
   --density-shell-pad: 32px;
   --density-header-gap: 28px;
   --density-page-gap: 18px;
@@ -183,7 +183,7 @@
   --density-card-pad: 22px;
   --density-card-gap: 12px;
   --density-overview-rhythm: 24px;
-  --density-overview-title: 32px;
+  --density-overview-title: 20px;
   --radius-panel: 22px;
   --radius-sm: 12px;
 }
@@ -196,7 +196,7 @@
 :root:not([data-density="comfortable"]) .overview-card .text-sm,
 [data-density="compact"] .panel .text-sm,
 [data-density="compact"] .overview-card .text-sm {
-  font-size: 14px;
+  font-size: 10px;
 }
 
 /* ─── Ensure extension classes ────────────────────────── */
@@ -222,7 +222,7 @@
 /* ─── Base styles ─────────────────────────────────────── */
 html {
   color-scheme: light;
-  font-size: var(--density-root-font, 121%);
+  font-size: var(--density-root-font, 110%);
 }
 
 [data-theme="dark"] {
@@ -295,7 +295,7 @@ input:disabled {
 /* sm:p-8 is too much outer page padding; keep the class, use p-4 scale. */
 @media (width >= 40rem) {
   .sm\:p-8 {
-    padding: calc(var(--spacing) * 4);
+    padding: calc(var(--spacing) * 1);
   }
 }
 
@@ -304,7 +304,7 @@ input:disabled {
   max-width: 1440px;
   margin: 0 auto;
   background: var(--shell-gradient);
-  border-radius: 32px;
+  border-radius: 14px;
   padding: var(--density-shell-pad);
   box-shadow: var(--shadow-shell);
 }
@@ -319,7 +319,7 @@ input:disabled {
   border-radius: 12px;
   background: color-mix(in srgb, var(--color-warning) 10%, var(--color-surface-elevated));
   color: var(--color-text);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -339,7 +339,7 @@ input:disabled {
 
 @media (max-width: 700px) {
   .dashboard-shell {
-    padding: 20px;
+    padding: 5px;
     border-radius: 0;
   }
 }
@@ -359,7 +359,7 @@ input:disabled {
     background-color: var(--color-surface-elevated);
   }
   .overview-card + .overview-card {
-    margin-top: 20px;
+    margin-top: 0px;
   }
   .overview-page {
     gap: 0 !important;
@@ -374,12 +374,12 @@ input:disabled {
      `shrink-0`/nowrap, so without this they spill past the nav (and the
      viewport) as soon as there are more Sparks than fit on one line. */
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 1px;
   background: var(--color-surface-elevated);
-  padding: 5px 6px;
+  padding: 1px 1px;
   /* 23px == fully rounded at the 45.5px single-row height (the browser clamps
      it to half the height), and keeps sane corners once the nav is 2+ rows. */
-  border-radius: 23px;
+  border-radius: 18px;
   box-shadow: var(--shadow-card);
   /* Zero basis so the header's own flex-wrap never breaks the nav (and the
      right-hand controls) onto extra header lines — the nav takes the space
@@ -425,7 +425,7 @@ input:disabled {
 .pill-item {
   padding: 8px 18px;
   border-radius: 50px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--color-muted);
   text-decoration: none;
@@ -485,16 +485,16 @@ input:disabled {
   opacity: 0.6;
 }
 .pill-label {
-  padding: 8px 18px 8px 4px;
+  padding: 4px 1px 6px 2px;
   border: none;
   background: none;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: inherit;
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 3px;
 }
 .pill-item-with-handle:not(.is-active) .pill-label {
   color: var(--color-muted);
@@ -544,11 +544,11 @@ input:disabled {
 .logo-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   white-space: nowrap;
-  border-radius: 9999px;
-  padding: 10px 24px;
-  font-size: 14px;
+  border-radius: 18px;
+  padding: 10px 10px;
+  font-size: 10px;
   font-weight: 600;
   letter-spacing: -0.01em;
   background: var(--color-text);
@@ -574,7 +574,7 @@ select {
   border: 1px solid var(--color-border);
   background: var(--color-surface-elevated);
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--color-text);
   outline: none;
   transition: border-color 0.15s;
@@ -606,7 +606,7 @@ input[type="checkbox"] {
   select,
   textarea,
   .bench-input {
-    font-size: 16px !important;
+    font-size: 15px !important;
   }
 }
 
@@ -664,7 +664,7 @@ input[type="checkbox"] {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -713,7 +713,7 @@ input[type="checkbox"] {
   gap: 0.375rem;
   padding: 0.125rem 0.5rem;
   border-radius: 9999px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.02em;
   border: 1px solid var(--color-border);
@@ -738,7 +738,7 @@ input[type="checkbox"] {
   gap: 0.25rem;
   padding: 0.25rem 0.75rem;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: 10px;
   color: var(--color-muted-strong);
   background: var(--color-surface-elevated);
   border: 1px solid var(--color-border);
@@ -753,7 +753,7 @@ input[type="checkbox"] {
   padding: 6px 16px;
   background: var(--color-surface-elevated);
   border-radius: 50px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--color-muted-strong);
   box-shadow: var(--shadow-card);
@@ -779,7 +779,7 @@ input[type="checkbox"] {
   gap: 6px;
   padding: 4px 12px;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   background: var(--color-accent-soft);
   color: var(--color-accent);
@@ -792,7 +792,7 @@ input[type="checkbox"] {
   gap: 6px;
   padding: 4px 10px;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   cursor: help;
 }
@@ -855,7 +855,7 @@ input[type="checkbox"] {
   gap: 10px;
   padding: 10px 14px;
   border-radius: 10px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--color-muted);
   border: none;
@@ -1053,7 +1053,7 @@ input[type="checkbox"] {
   flex-shrink: 0;
   padding: 0.9rem 1.1rem 0.75rem;
   border-bottom: 1px solid var(--color-border);
-  font-size: 0.875rem;
+  font-size: 0.87rem;
   font-weight: 600;
   color: var(--color-text-strong);
 }
@@ -1175,7 +1175,7 @@ input[type="checkbox"] {
 }
 .bench-sheet__title {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--color-text-strong);
@@ -1183,7 +1183,7 @@ input[type="checkbox"] {
 }
 .bench-sheet__subtitle {
   margin: 0.3rem 0 0;
-  font-size: 0.75rem;
+  font-size: 0.70rem;
   line-height: 1.35;
   color: var(--color-muted);
   overflow: hidden;
@@ -1202,7 +1202,7 @@ input[type="checkbox"] {
   border-radius: 0.5rem;
   background: transparent;
   color: var(--color-muted);
-  font-size: 0.875rem;
+  font-size: 0.870rem;
   line-height: 1;
   cursor: pointer;
 }
@@ -1228,13 +1228,13 @@ input[type="checkbox"] {
 }
 .bench-sheet__section-title {
   margin: 0;
-  font-size: 0.8125rem;
+  font-size: 0.80rem;
   font-weight: 600;
   color: var(--color-text);
 }
 .bench-sheet__hint {
   margin: 0;
-  font-size: 0.6875rem;
+  font-size: 0.67rem;
   line-height: 1.45;
   color: var(--color-muted);
 }
@@ -1245,7 +1245,7 @@ input[type="checkbox"] {
   border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
   background: color-mix(in srgb, var(--color-danger) 12%, transparent);
   color: var(--color-danger);
-  font-size: 0.75rem;
+  font-size: 0.70rem;
 }
 
 .bench-field {
@@ -1271,7 +1271,7 @@ input[type="checkbox"] {
 }
 .bench-type-grid .bench-conc-btn {
   font-variant-numeric: normal;
-  font-size: 0.75rem;
+  font-size: 0.70rem;
   padding: 0 0.35rem;
 }
 .bench-conc-btn {
@@ -1280,7 +1280,7 @@ input[type="checkbox"] {
   border: 1px solid var(--color-border);
   background: #ffffff;
   color: var(--color-muted);
-  font-size: 0.8125rem;
+  font-size: 0.80rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
@@ -1325,7 +1325,7 @@ input[type="checkbox"] {
   border: 1px solid var(--color-border);
   background: #ffffff;
   color: var(--color-text);
-  font-size: 0.8125rem;
+  font-size: 0.80rem;
   font-variant-numeric: tabular-nums;
   text-align: left;
   outline: none;
@@ -1361,12 +1361,12 @@ input[type="checkbox"] {
   gap: 0.75rem;
 }
 .bench-progress__status {
-  font-size: 0.8125rem;
+  font-size: 0.80rem;
   font-weight: 600;
   color: var(--color-accent);
 }
 .bench-progress__meta {
-  font-size: 0.75rem;
+  font-size: 0.70rem;
   font-variant-numeric: tabular-nums;
   color: var(--color-muted);
   text-align: right;
@@ -1395,7 +1395,7 @@ input[type="checkbox"] {
   align-items: center;
   padding: 0.2rem 0.6rem;
   border-radius: 999px;
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -1415,7 +1415,7 @@ input[type="checkbox"] {
   color: var(--color-muted);
 }
 .bench-status-meta {
-  font-size: 0.75rem;
+  font-size: 0.70rem;
   font-variant-numeric: tabular-nums;
   color: var(--color-muted);
 }
@@ -1436,7 +1436,7 @@ input[type="checkbox"] {
 .bench-results__caption {
   padding: 0.55rem 0.9rem;
   border-bottom: 1px solid var(--color-border);
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1453,7 +1453,7 @@ input[type="checkbox"] {
     gap: 1rem;
     padding: 0.45rem 1rem;
     border-bottom: 1px solid var(--color-border);
-    font-size: 0.625rem;
+    font-size: 0.61rem;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -1505,7 +1505,7 @@ input[type="checkbox"] {
   border-radius: 0.4rem;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
-  font-size: 0.75rem;
+  font-size: 0.70rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
@@ -1516,7 +1516,7 @@ input[type="checkbox"] {
   align-items: center;
   gap: 0.2rem 0;
   min-width: 0;
-  font-size: 0.75rem;
+  font-size: 0.70rem;
   font-variant-numeric: tabular-nums;
   color: var(--color-muted);
   line-height: 1.35;
@@ -1554,7 +1554,7 @@ input[type="checkbox"] {
 }
 
 .bench-result-row__label {
-  font-size: 0.625rem;
+  font-size: 0.6rem;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1575,7 +1575,7 @@ input[type="checkbox"] {
   }
 }
 .bench-result-row__value {
-  font-size: 1.05rem;
+  font-size: 1rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -1587,13 +1587,13 @@ input[type="checkbox"] {
 }
 .bench-result-row__unit {
   margin-left: 0.2rem;
-  font-size: 0.625rem;
+  font-size: 0.6rem;
   font-weight: 500;
   color: var(--color-muted);
   letter-spacing: 0;
 }
 .bench-result-row__sub {
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   font-variant-numeric: tabular-nums;
   color: var(--color-muted);
   line-height: 1.2;
@@ -1601,7 +1601,7 @@ input[type="checkbox"] {
 
 .bench-legend {
   margin: 0;
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   line-height: 1.45;
   color: var(--color-muted);
 }
@@ -1626,7 +1626,7 @@ input[type="checkbox"] {
   padding: 0.45rem 0.9rem;
   border-radius: 0.5rem;
   border: 1px solid transparent;
-  font-size: 0.8125rem;
+  font-size: 0.80rem;
   font-weight: 600;
   cursor: pointer;
 }
@@ -1705,7 +1705,7 @@ input[type="checkbox"] {
   padding: calc(var(--density-shell-pad, 20px) * 0.85);
   background: var(--color-bg);
   color: var(--color-text);
-  font-size: 0.75rem; /* 12px — 1px tighter than prior 13px base */
+  font-size: 0.70rem; /* 12px — 1px tighter than prior 13px base */
 }
 
 .showcase-brand {
@@ -1725,14 +1725,14 @@ input[type="checkbox"] {
   text-align: center;
 }
 .showcase-page__empty h1 {
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 600;
   color: var(--color-text-strong);
   margin-bottom: 0.5rem;
 }
 .showcase-page__empty p,
 .showcase-page__footer-note {
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   color: var(--color-muted);
 }
 .showcase-page__footer-note {
@@ -1764,7 +1764,7 @@ input[type="checkbox"] {
   min-width: 0;
 }
 .showcase-model-header__label {
-  font-size: 0.5625rem;
+  font-size: 0.56rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.14em;
@@ -1795,7 +1795,7 @@ input[type="checkbox"] {
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-surface);
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
 }
 .showcase-metrics__hero {
   display: inline-flex;
@@ -1805,7 +1805,7 @@ input[type="checkbox"] {
   padding-right: 0.3rem;
 }
 .showcase-metrics__hero-value {
-  font-size: 1.25rem;
+  font-size: 1.24rem;
   font-weight: 700;
   line-height: 1;
   color: var(--color-accent);
@@ -1813,7 +1813,7 @@ input[type="checkbox"] {
 }
 .showcase-metrics__hero-unit {
   margin-left: 0.2rem;
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   font-weight: 600;
   color: var(--color-accent);
   opacity: 0.85;
@@ -1825,7 +1825,7 @@ input[type="checkbox"] {
   gap: 0.2rem 0.3rem;
 }
 .showcase-metrics__label {
-  font-size: 0.5625rem;
+  font-size: 0.56rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--color-muted);
@@ -1838,10 +1838,10 @@ input[type="checkbox"] {
 .showcase-metrics__unit {
   font-weight: 500;
   color: var(--color-muted);
-  font-size: 0.625rem;
+  font-size: 0.6rem;
 }
 .showcase-metrics__sub {
-  font-size: 0.625rem;
+  font-size: 0.6rem;
   color: var(--color-muted);
 }
 .showcase-metrics__sep {
@@ -1889,20 +1889,20 @@ input[type="checkbox"] {
   gap: 0.2rem;
 }
 .showcase-config-peek__tps-value {
-  font-size: 0.95rem;
+  font-size: 0.90rem;
   font-weight: 700;
   color: var(--color-accent);
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 .showcase-config-peek__tps-unit {
-  font-size: 0.625rem;
+  font-size: 0.6rem;
   font-weight: 600;
   color: var(--color-accent);
   opacity: 0.85;
 }
 .showcase-config-peek__tps-tokens {
-  font-size: 0.625rem;
+  font-size: 0.6rem;
   color: var(--color-muted);
   margin-left: 0.15rem;
 }
@@ -1933,7 +1933,7 @@ input[type="checkbox"] {
   min-width: 0;
 }
 .showcase-config__name {
-  font-size: 0.75rem;
+  font-size: 0.70rem;
   font-weight: 600;
   color: var(--color-text-strong);
   line-height: 1.15;
@@ -1942,7 +1942,7 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 .showcase-config__meta {
-  font-size: 0.5625rem;
+  font-size: 0.56rem;
   letter-spacing: 0.02em;
   color: var(--color-muted);
   line-height: 1.15;
@@ -1987,7 +1987,7 @@ input[type="checkbox"] {
 .showcase-field__label {
   display: block;
   height: 0.8rem;
-  font-size: 0.5625rem;
+  font-size: 0.56rem;
   line-height: 0.8rem;
   color: var(--color-muted);
   text-transform: uppercase;
@@ -2008,7 +2008,7 @@ input[type="checkbox"] {
   border-radius: 5px;
   background: var(--color-surface-elevated);
   color: var(--color-text);
-  font-size: 16px; /* iOS: avoid input zoom */
+  font-size: 15px; /* iOS: avoid input zoom */
   padding: 0 0.35rem;
   line-height: 1.15;
 }
@@ -2018,7 +2018,7 @@ input[type="checkbox"] {
 @media (min-width: 640px) {
   .showcase-field select,
   .showcase-field input[type="number"] {
-    font-size: 0.6875rem;
+    font-size: 0.68rem;
   }
 }
 
@@ -2029,7 +2029,7 @@ input[type="checkbox"] {
   gap: 0.3rem;
   height: 1.65rem;
   padding: 0 0.1rem;
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   line-height: 1;
   color: var(--color-text);
   cursor: pointer;
@@ -2060,7 +2060,7 @@ input[type="checkbox"] {
   border-radius: 5px;
   border: 1px solid var(--color-border);
   padding: 0 0.6rem;
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   font-weight: 500;
   line-height: 1;
   cursor: pointer;
@@ -2098,7 +2098,7 @@ input[type="checkbox"] {
   margin-bottom: 0.35rem;
 }
 .showcase-history__title {
-  font-size: 0.625rem;
+  font-size: 0.62rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -2110,7 +2110,7 @@ input[type="checkbox"] {
 }
 .showcase-history__empty {
   margin: 0;
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   color: var(--color-muted);
 }
 .showcase-history__list {
@@ -2156,7 +2156,7 @@ input[type="checkbox"] {
   cursor: not-allowed;
 }
 .showcase-history__when {
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   font-weight: 600;
   color: var(--color-text-strong);
 }
@@ -2164,7 +2164,7 @@ input[type="checkbox"] {
   display: flex;
   flex-wrap: wrap;
   gap: 0.15rem 0.35rem;
-  font-size: 0.625rem;
+  font-size: 0.62rem;
   color: var(--color-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -2185,7 +2185,7 @@ input[type="checkbox"] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.5625rem;
+  font-size: 0.56rem;
   color: var(--color-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
@@ -2239,7 +2239,7 @@ input[type="checkbox"] {
   gap: 0.12rem;
 }
 .showcase-prompt__label {
-  font-size: 0.5625rem;
+  font-size: 0.56rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--color-muted);
@@ -2251,20 +2251,20 @@ input[type="checkbox"] {
   border-radius: 5px;
   background: var(--color-surface-elevated);
   color: var(--color-text);
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.3;
   padding: 0.3rem 0.4rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 @media (min-width: 640px) {
   .showcase-prompt textarea {
-    font-size: 0.6875rem;
+    font-size: 0.68rem;
   }
 }
 
 .showcase-config__error {
   margin: 0 0.55rem 0.55rem;
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   color: var(--color-danger, #c44);
 }
 
@@ -2347,7 +2347,7 @@ input[type="checkbox"] {
     max-height: 50vh;
   }
   .showcase-metrics__hero-value {
-    font-size: 1.15rem;
+    font-size: 1.1rem;
   }
 }
 @media (min-width: 640px) {
@@ -2399,7 +2399,7 @@ input[type="checkbox"] {
   padding: 0.35rem 0.5rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
 }
 .showcase-term__label {
   flex: 1;
@@ -2414,7 +2414,7 @@ input[type="checkbox"] {
   flex-shrink: 0;
   padding: 0.08rem 0.35rem;
   border-radius: 999px;
-  font-size: 0.5625rem;
+  font-size: 0.56rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   background: rgba(255, 255, 255, 0.08);
@@ -2440,7 +2440,7 @@ input[type="checkbox"] {
 }
 .showcase-term__tps-peak {
   color: #7a9e8c;
-  font-size: 0.9em;
+  font-size: 0.8em;
 }
 .showcase-term__copy {
   flex-shrink: 0;
@@ -2448,7 +2448,7 @@ input[type="checkbox"] {
   border-radius: 4px;
   background: transparent;
   color: #aaa;
-  font-size: 0.5625rem;
+  font-size: 0.56rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   padding: 0.12rem 0.35rem;
@@ -2465,7 +2465,7 @@ input[type="checkbox"] {
   padding: 0.4rem 0.5rem;
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   line-height: 1.4;
   color: #d0d0d0;
 }
@@ -2489,7 +2489,7 @@ input[type="checkbox"] {
   border: 0;
   background: transparent;
   color: #8a8a8a;
-  font-size: 0.625rem;
+  font-size: 0.62rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 0.1rem 0;
@@ -2542,7 +2542,7 @@ input[type="checkbox"] {
   min-height: 0;
 }
 [data-density="compact"] .showcase-term__body {
-  font-size: 0.625rem;
+  font-size: 0.62rem;
   padding: 0.35rem 0.45rem;
 }
 
