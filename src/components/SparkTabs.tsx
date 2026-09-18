@@ -46,7 +46,7 @@ function GripIcon() {
 
 /* ─── Mobile helpers ──────────────────────────────────── */
 
-const MOBILE_BREAKPOINT = 768;
+const MOBILE_BREAKPOINT = 480;
 
 function useIsMobile(): boolean {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < MOBILE_BREAKPOINT);

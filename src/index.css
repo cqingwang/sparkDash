@@ -293,7 +293,7 @@ input:disabled {
 }
 
 /* sm:p-8 is too much outer page padding; keep the class, use p-4 scale. */
-@media (width >= 40rem) {
+@media (width >= 25rem) {
   .sm\:p-8 {
     padding: calc(var(--spacing) * 1);
   }
