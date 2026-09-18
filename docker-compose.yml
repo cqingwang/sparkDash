@@ -45,7 +45,7 @@ services:
     environment:
       # Secure default: host-networked service listens only on loopback.
       # See docs/REMOTE-ACCESS.md; direct non-loopback binds fail closed.
-      - BIND_HOST=${BIND_HOST:-127.0.0.1}
+      - BIND_HOST=${BIND_HOST:-0.0.0.0}
       - SPARKDASH_TOKEN=${SPARKDASH_TOKEN:-}
       - SPARKDASH_ALLOW_OPEN_REMOTE=${SPARKDASH_ALLOW_OPEN_REMOTE:-1}
       - PORT=5555

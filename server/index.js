@@ -56,7 +56,7 @@ const ROOT = path.resolve(__dirname, "..");
 // Default to loopback. Direct non-loopback binds fail closed because this release
 // does not authenticate LAN clients. Use an SSH tunnel, authenticated reverse
 // proxy, or Tailscale Serve (docs/REMOTE-ACCESS.md).
-const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
+const BIND_HOST = process.env.BIND_HOST || "0.0.0.0";
 const PORT = parseInt(process.env.PORT || "5555", 10);
 const LLM_PORT = parseInt(process.env.LLM_PORT || "8888", 10);
 const COMFY_PORT = parseInt(process.env.COMFY_PORT || "8188", 10);
@@ -315,7 +315,7 @@ app.use(express.json());
 app.use(createAuthMiddleware());
 
 app.get("/api/health", (_req, res) => {
-  res.json(inspectHealth(process.env.BIND_HOST || "127.0.0.1"));
+  res.json(inspectHealth(process.env.BIND_HOST || "0.0.0.0"));
 });
 
 function clientKey(req) {

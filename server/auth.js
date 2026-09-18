@@ -49,7 +49,7 @@ export function createAuthMiddleware() {
   return function authMiddleware(req, res, next) {
     const method = (req.method || "GET").toUpperCase();
     const mutating = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
-    const remote = requireRemoteAuth(process.env.BIND_HOST || "127.0.0.1");
+    const remote = requireRemoteAuth(process.env.BIND_HOST || "0.0.0.0");
     if (!mutating && !remote && !configuredToken()) return next();
     if (!mutating && !remote) return next();
     if (!mutating && remote && !configuredToken()) {
@@ -63,7 +63,7 @@ export function createAuthMiddleware() {
 }
 
 export function authorizeUpgrade(req) {
-  const remote = requireRemoteAuth(process.env.BIND_HOST || "127.0.0.1");
+  const remote = requireRemoteAuth(process.env.BIND_HOST || "0.0.0.0");
   if (!remote && !configuredToken()) return true;
   return authenticate(req).ok;
 }
