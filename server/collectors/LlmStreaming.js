@@ -5,7 +5,7 @@
  * (not stream EOF), so trailing usage/[DONE] latency does not drag the rate down.
  */
 
-import { Agent } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 
 /** Response headers worth keeping for request correlation / debugging. */
 const DEBUG_HEADER_RE =
@@ -19,11 +19,40 @@ export const CONTENT_PREVIEW_CHARS = 160;
  * not produced a first token (or even response headers) by then is aborted
  * even when PrefillBench's own timer is 30–45 minutes. 0 disables those idle
  * cuts; the caller AbortSignal still bounds the request.
+ *
+ * Must use undici's own `fetch` with this Agent. Node 22's global fetch is a
+ * different undici build; passing an npm Agent as `dispatcher` fails immediately
+ * with UND_ERR_INVALID_ARG ("fetch failed").
  */
 export const LLM_STREAM_AGENT = new Agent({
   headersTimeout: 0,
   bodyTimeout: 0,
 });
+
+let streamAgentClosePromise = null;
+
+/** Close the shared dispatcher once, destroying it if graceful close stalls. */
+export function closeLlmStreamAgent(timeoutMs = 2_000) {
+  if (streamAgentClosePromise) return streamAgentClosePromise;
+  streamAgentClosePromise = (async () => {
+    let timer;
+    try {
+      await Promise.race([
+        LLM_STREAM_AGENT.close(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("dispatcher close timed out")), timeoutMs);
+        }),
+      ]);
+      return true;
+    } catch {
+      LLM_STREAM_AGENT.destroy();
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  return streamAgentClosePromise;
+}
 
 /** Map fetch/undici failures to a short UI string. */
 export function describeStreamFetchError(err) {
@@ -65,9 +94,14 @@ export function sleep(ms, signal) {
       reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
       return;
     }
-    const t = setTimeout(resolve, ms);
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const t = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
     const onAbort = () => {
       clearTimeout(t);
+      cleanup();
       reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
     };
     if (signal) {
@@ -125,6 +159,16 @@ export async function readServerGenerationTokens(baseUrl, opts = {}) {
           /^sglang_generation_tokens_total(?:\{[^}]*\})?\s+([\d.eE+-]+)\s*$/gm
         );
       if (sglang != null) return sglang;
+      // q27 (signalnine/q27 engine) — live processed counter first, then the
+      // completion-based per-api total (same preference as LlmProbe).
+      const q27 =
+        fromSeries(
+          /^q27_decode_tokens_processed_total(?:\{[^}]*\})?\s+([\d.eE+-]+)\s*$/gm
+        ) ??
+        fromSeries(
+          /^q27_decode_tokens_total(?:\{[^}]*\})?\s+([\d.eE+-]+)\s*$/gm
+        );
+      if (q27 != null) return q27;
     }
   } catch {
     /* try next */
@@ -516,7 +560,7 @@ async function runStreamingRequestOnce(
     const key = apiKey != null ? String(apiKey).trim() : "";
     if (key) headers.Authorization = `Bearer ${key}`;
 
-    const response = await fetch(url, {
+    const response = await undiciFetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),

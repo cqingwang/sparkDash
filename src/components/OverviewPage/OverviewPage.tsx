@@ -4,12 +4,17 @@ import { isWorkerSpark, resolveSparkRole } from "../../api/sparkRole";
 import { shutdownAllSparks, updateAllHermes, wakeAllSparks } from "../../api/client";
 import { ConfirmShutdownDialog } from "../ConfirmShutdownDialog";
 import { MetricBar } from "../ui/MetricBar";
+import { FleetEnergyCard } from "./FleetEnergyCard";
+import { FleetAlertStrip } from "./FleetAlertStrip";
 import { ActivityIcon, PowerOffIcon, PowerOnIcon, RotateIcon } from "../ui/icons";
 
 interface OverviewPageProps {
   sparks: SparkSnapshot[];
   hideOffline?: boolean;
   hideWorkers?: boolean;
+  showFleetEnergy?: boolean;
+  showFleetExceptions?: boolean;
+  showOverviewSearch?: boolean;
   temperatureUnit?: "celsius" | "fahrenheit";
   onSelectSpark?: (id: string) => void;
 }
@@ -309,8 +314,12 @@ function SparkCard({
               const role = resolveSparkRole(spark);
 
               // Workers have no local LLM API — show cluster/model label instead.
+              // Priority: manual workerLabel override > derived head-model
+              // mirror > generic fallback. Derived never shows a stale model:
+              // the backend nulls it when the head is unresolvable/offline.
               if (role === "worker") {
-                const label = spark.workerLabel?.trim() || "distributed";
+                const label =
+                  spark.workerLabel?.trim() || spark.workerDerivedLabel?.trim() || "distributed";
                 const title = headSparkName
                   ? `${label} · worker of ${headSparkName}`
                   : `${label} · distributed LLM worker`;
@@ -340,7 +349,9 @@ function SparkCard({
                           ? "sgLang"
                           : llm.backend === "exl3"
                             ? "EXL3"
-                            : llm.backend ?? "LLM"
+                            : llm.backend === "q27"
+                              ? "q27"
+                              : llm.backend ?? "LLM"
                   }
                   value={llm.modelId ?? "unknown"}
                   tone="accent"
@@ -384,11 +395,23 @@ export function OverviewPage({
   sparks,
   hideOffline = false,
   hideWorkers = false,
+  showFleetEnergy = false,
+  showFleetExceptions = false,
+  showOverviewSearch = false,
   temperatureUnit = "celsius",
   onSelectSpark,
 }: OverviewPageProps) {
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "online" | "offline" | "issues">("all");
   const withoutWorkers = hideWorkers ? sparks.filter((s) => !isWorkerSpark(s)) : sparks;
-  const visibleSparks = hideOffline ? withoutWorkers.filter((s) => s.online) : withoutWorkers;
+  const visibleSparks = withoutWorkers.filter((spark) => {
+    if (hideOffline && !spark.online) return false;
+    if (showOverviewSearch && query && !spark.name.toLowerCase().includes(query.toLowerCase())) return false;
+    if (showOverviewSearch && statusFilter === "online" && !spark.online) return false;
+    if (showOverviewSearch && statusFilter === "offline" && spark.online) return false;
+    if (showOverviewSearch && statusFilter === "issues" && spark.online && !spark.metrics.storage.some((disk) => disk.percentage >= 90)) return false;
+    return true;
+  });
   const hiddenWorkerCount = hideWorkers ? sparks.filter(isWorkerSpark).length : 0;
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchMsg, setBatchMsg] = useState<{ text: string; tone: "ok" | "err" } | null>(null);
@@ -515,7 +538,7 @@ export function OverviewPage({
     }
   }
 
-  if (visibleSparks.length === 0) {
+  if (withoutWorkers.length === 0 || (hideOffline && withoutWorkers.every((spark) => !spark.online))) {
     const allWorkersHidden = hideWorkers && sparks.length > 0 && withoutWorkers.length === 0;
     const allOffline = hideOffline && withoutWorkers.length > 0;
     const title = allWorkersHidden
@@ -543,6 +566,8 @@ export function OverviewPage({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--density-overview-rhythm)" }}>
+      {showFleetEnergy ? <FleetEnergyCard nodeCount={sparks.length} /> : null}
+      {showFleetExceptions ? <FleetAlertStrip sparks={sparks} onSelect={onSelectSpark} /> : null}
       <div className="flex flex-wrap items-end justify-between gap-6">
         <h1
           className="font-normal leading-tight tracking-tight text-text-strong"
@@ -645,6 +670,28 @@ export function OverviewPage({
           )}
         </div>
       </div>
+      {showOverviewSearch ? (
+      <div className="flex flex-wrap gap-2" role="search" aria-label="Filter fleet units">
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search up to 12 units"
+          aria-label="Search units by name"
+          className="min-h-11 min-w-52 flex-1 rounded border border-border bg-surface-elevated px-3 text-sm text-text"
+        />
+        <select
+          value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+          aria-label="Filter units by status"
+          className="min-h-11 rounded border border-border bg-surface-elevated px-3 text-sm text-text"
+        >
+          <option value="all">All status</option>
+          <option value="online">Online</option>
+          <option value="offline">Offline</option>
+          <option value="issues">Issues</option>
+        </select>
+      </div>
+      ) : null}
       <ConfirmShutdownDialog
         open={shutdownOpen}
         onClose={() => setShutdownOpen(false)}
@@ -654,6 +701,11 @@ export function OverviewPage({
         confirmLabel="Shut down all"
       />
       <div className="overview-page grid sm:grid-cols-2 lg:grid-cols-3" style={{ gap: "var(--density-page-gap)" }}>
+        {visibleSparks.length === 0 && (
+          <p className="panel p-6 text-sm text-muted sm:col-span-2 lg:col-span-3">
+            No units match the current search and status filters.
+          </p>
+        )}
         {visibleSparks.map((spark) => (
           <SparkCard
             key={spark.id}

@@ -19,6 +19,21 @@ export function parseNvErrNoMemoryCount(raw) {
   return n;
 }
 
+export const COLLECTION_SUCCESS = Symbol("sparkdash.collectionSuccess");
+
+export function collectionWasSuccessful(result) {
+  return result?.[COLLECTION_SUCCESS] === true;
+}
+
+function tagCollectionResult(result, successful) {
+  Object.defineProperty(result, COLLECTION_SUCCESS, {
+    value: successful === true,
+    enumerable: false,
+    configurable: true,
+  });
+  return result;
+}
+
 /**
  * SystemCollector — collects hardware metrics for a Spark.
  * In Phase 2, this is the LOCAL path only (no SSH).
@@ -32,6 +47,7 @@ export class SystemCollector {
     // Rate-tracking baselines
     this.lastNetworkStats = new Map();
     this.lastCpuStat = null;
+    this._cpuCollectionSequence = 0;
     /** Last computed CPU usage percentage (0-100) — used by GPU system-draw estimate. */
     this.lastCpuUsagePct = 0;
     this.lastRaplReading = null;
@@ -53,42 +69,92 @@ export class SystemCollector {
 
   /** Collect GPU metrics (temperature, usage, power, VRAM). */
   async collectGpu() {
-    if (!this.spark.isLocal) return this._getRemoteGpu();
     try {
-      const gpuData = await this._getGPUAll();
-      return gpuData;
+      const gpuData = this.spark.isLocal
+        ? await this._getGPUAll()
+        : await this._getRemoteGpu();
+      return tagCollectionResult(gpuData, this._isSuccessfulGpuCollection(gpuData));
     } catch (err) {
       console.error(`[SystemCollector] GPU error for ${this.spark.id}:`, err.message);
-      return this._defaultGpu();
+      return tagCollectionResult(this._defaultGpu(), false);
     }
   }
 
   /** Collect CPU metrics (usage, temperature, power). */
   async collectCpu() {
-    if (!this.spark.isLocal) return this._getRemoteCpu();
+    const collectionSequence = ++this._cpuCollectionSequence;
     try {
+      if (!this.spark.isLocal) {
+        const cpuData = await this._getRemoteCpu(collectionSequence);
+        return tagCollectionResult(cpuData, this._isSuccessfulCpuCollection(cpuData));
+      }
+
       // Read /proc/stat once and compute usage BEFORE estimating power.
       // Previously _getCPUPower re-read /proc/stat in parallel with _getCPUUsage,
       // racing on lastCpuStat and producing 0% (idle power) on the first poll.
       const usage = await this._getCPUUsage();
+      if (!this._isValidCpuStat(usage)) {
+        throw new Error("invalid /proc/stat CPU counters");
+      }
       const totalDiff = usage.total - (this.lastCpuStat?.total || usage.total);
       const usedDiff = usage.used - (this.lastCpuStat?.used || usage.used);
       const cpuPercentage = totalDiff > 0 ? Math.round((usedDiff / totalDiff) * 100) : 0;
       const usageFraction = totalDiff > 0 ? usedDiff / totalDiff : 0;
-      this.lastCpuStat = usage;
-      this.lastCpuUsagePct = cpuPercentage;
-
       // Temperature and power can run in parallel — power is now a pure
       // function of the usage fraction (no extra /proc/stat read).
       const [temp, power] = await Promise.all([
         this._getCPUTemperature(),
         this._getCPUPower(usageFraction),
       ]);
-      return { usage: cpuPercentage, temperature: temp, ...power };
+      if (collectionSequence === this._cpuCollectionSequence) {
+        this.lastCpuStat = usage;
+        this.lastCpuUsagePct = cpuPercentage;
+      }
+      const cpuData = { usage: cpuPercentage, temperature: temp, ...power };
+      return tagCollectionResult(cpuData, this._isSuccessfulCpuCollection(cpuData));
     } catch (err) {
       console.error(`[SystemCollector] CPU error for ${this.spark.id}:`, err.message);
-      return this._defaultCpu();
+      return tagCollectionResult(this._defaultCpu(), false);
     }
+  }
+
+  _isSuccessfulGpuCollection(gpu) {
+    return (
+      Number.isFinite(gpu?.temperature) &&
+      gpu.temperature > 0 &&
+      Number.isFinite(gpu?.usage) &&
+      Number.isFinite(gpu?.power?.draw) &&
+      gpu.power.draw >= 0 &&
+      Number.isFinite(gpu?.power?.limit) &&
+      gpu.power.limit > 0
+    );
+  }
+
+  _isSuccessfulCpuCollection(cpu) {
+    return (
+      Number.isFinite(cpu?.usage) &&
+      cpu.usage >= 0 &&
+      cpu.usage <= 100 &&
+      Number.isFinite(cpu?.draw) &&
+      cpu.draw > 0 &&
+      Number.isFinite(cpu?.tdp) &&
+      cpu.tdp > 0
+    );
+  }
+
+  _isValidCpuStat(cpuStat) {
+    return (
+      Number.isFinite(cpuStat?.total) &&
+      cpuStat.total > 0 &&
+      Number.isFinite(cpuStat?.used) &&
+      cpuStat.used >= 0 &&
+      cpuStat.used <= cpuStat.total
+    );
+  }
+
+  /** Prevent an earlier monitor lifecycle from updating shared CPU baselines. */
+  invalidatePendingCollections() {
+    this._cpuCollectionSequence += 1;
   }
 
   /** Collect RAM metrics. */
@@ -1038,7 +1104,14 @@ export class SystemCollector {
     ].join("; ");
   }
 
-  async _getRemoteCpu(sshExecutor = sshExec) {
+  async _getRemoteCpu(collectionSequenceOrExecutor = null, executor = sshExec) {
+    // Keep the injectable executor used by focused collector tests while also
+    // accepting the lifecycle sequence supplied by collectCpu().
+    const sshExecutor =
+      typeof collectionSequenceOrExecutor === "function" ? collectionSequenceOrExecutor : executor;
+    const attemptSequence = Number.isInteger(collectionSequenceOrExecutor)
+      ? collectionSequenceOrExecutor
+      : ++this._cpuCollectionSequence;
     try {
       const cmd = this._buildRemoteCpuCommand();
 
@@ -1049,10 +1122,16 @@ export class SystemCollector {
       const tempOut = sections[2] || "";
 
       const cpuStat = this._parseCPUUsage(statOut);
+      if (!this._isValidCpuStat(cpuStat)) {
+        throw new Error("invalid remote /proc/stat CPU counters");
+      }
       const totalDiff = cpuStat.total - (this.lastCpuStat?.total || cpuStat.total);
       const usedDiff = cpuStat.used - (this.lastCpuStat?.used || cpuStat.used);
       const usage = totalDiff > 0 ? Math.round((usedDiff / totalDiff) * 100) : 0;
-      this.lastCpuStat = cpuStat;
+      if (attemptSequence === this._cpuCollectionSequence) {
+        this.lastCpuStat = cpuStat;
+        this.lastCpuUsagePct = usage;
+      }
 
       // ARM/Neoverse power estimation
       const isArm = /CPU architecture:\s*[89]|aarch64|ARMv[89]|armv[89]/i.test(cpuinfoOut);
@@ -1178,6 +1257,12 @@ export class SystemCollector {
         "echo '---'",
         // WoL MAC for the primary LAN NIC on DGX Spark
         `cat /sys/class/net/${WOL_INTERFACE}/address 2>/dev/null || true`,
+        "echo '---'",
+        // Link speed for every interface, not just the primary one: which
+        // interface is primary only falls out of the route table above, and
+        // fetching that one afterwards cost a second SSH login per poll.
+        // Virtual interfaces have no `speed`; they just come back blank.
+        "for d in /sys/class/net/*/speed; do echo \"$(basename $(dirname $d)):$(cat $d 2>/dev/null)\"; done 2>/dev/null || true",
       ].join("; ");
 
       const output = await sshExec(this.spark, cmd);
@@ -1187,6 +1272,16 @@ export class SystemCollector {
       const ipOut = sections[2]?.trim() || "";
       const operstateOut = sections[3]?.trim() || "";
       const wolMac = normalizeMac(sections[4]?.trim() || "");
+      const speedOut = sections[5]?.trim() || "";
+
+      // Parse link speed lines ("enP7s7:10000"); blank values stay unknown.
+      const speedMap = new Map();
+      for (const line of speedOut.split("\n")) {
+        const idx = line.indexOf(":");
+        if (idx <= 0) continue;
+        const mbps = parseInt(line.slice(idx + 1).trim(), 10);
+        if (Number.isFinite(mbps) && mbps > 0) speedMap.set(line.slice(0, idx), mbps);
+      }
 
       // Parse operstate lines ("enP7s7:up")
       const operstateMap = new Map();
@@ -1256,22 +1351,7 @@ export class SystemCollector {
         primaryInterface = alt?.name ?? primaryInterface;
       }
 
-      let linkSpeedMbps = null;
-      if (primaryInterface) {
-        try {
-          // Interface name is from the kernel; still keep it to safe chars
-          if (/^[a-zA-Z0-9._-]+$/.test(primaryInterface)) {
-            const speedRaw = await sshExec(
-              this.spark,
-              `cat /sys/class/net/${primaryInterface}/speed 2>/dev/null || true`
-            );
-            const n = parseInt(String(speedRaw).trim(), 10);
-            if (Number.isFinite(n) && n > 0) linkSpeedMbps = n;
-          }
-        } catch {
-          /* link speed optional */
-        }
-      }
+      const linkSpeedMbps = (primaryInterface && speedMap.get(primaryInterface)) || null;
 
       return { primaryInterface, linkSpeedMbps, interfaces: tagged, wolMac };
     } catch (err) {
