@@ -236,7 +236,7 @@ function SparkCard({
               label={
                 spark.kind === "host" || (spark.metrics.cpu?.temperature ?? 0) > 0
                   ? "GPU"
-                  : "Temperature"
+                  : "GPU"
               }
               value={displayTemp}
               max={temperatureUnit === "fahrenheit" ? 212 : 100}
