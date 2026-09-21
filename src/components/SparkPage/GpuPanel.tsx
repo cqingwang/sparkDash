@@ -96,7 +96,7 @@ export function GpuPanel({ gpu, cpu, sparkId, temperatureUnit, className }: GpuP
         value={<span className="text-text-strong">{usage}%</span>}
       />
       <MetricRow
-        label="Temperature"
+        label="GPU"
         color={tempColor}
         spark={<Sparkline data={tempHistory} color={tempColor} width={180} />}
         value={<span className="text-text-strong">{tempLabel}</span>}

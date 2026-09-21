@@ -7,8 +7,9 @@ Owner: **Nyx** (nvoss@onyxailabs.com). Program start: 2026-09-07. Host: Onyx Mac
 sparkDash is the **live fleet dashboard** for the Onyx fleet. This charter covers its operation
 and evolution on the Mac Studio:
 
-- Running production instance at **http://127.0.0.1:5555** (loopback; remote access only via
-  authenticated front door — see `docs/REMOTE-ACCESS.md`).
+- Running production instance at **http://<host-ip>:5555** (default `0.0.0.0`; configure
+  `SPARKDASH_TOKEN` and `SPARKDASH_ALLOW_OPEN_REMOTE=0` for remote access — see
+  `docs/REMOTE-ACCESS.md`).
 - Code evolution in the fork `MikeGibbsOnyx/sparkDash` (remote `mike`).
 - Ops hygiene: backups, promote procedure, weekly reporting.
 
@@ -26,9 +27,10 @@ The live dashboard at :5555 is **production**. Rules:
 2. Never edit live files in place. Build/test in a worktree or scratch checkout, then promote.
 3. A promote is not done until the new build is **verified serving on :5555** (HTTP 200 on `/`,
    API smoke on `/api/*`, WebSocket `/ws` connects).
-4. Security posture stays fail-closed: loopback bind by default; non-loopback bind requires
-   `SPARKDASH_TOKEN` + authenticated front door (Tailscale Serve / authenticated reverse proxy).
-   Firewall-only exposure is not allowed.
+4. Security posture stays explicit: the listener defaults to `0.0.0.0`, production remote access
+   must configure `SPARKDASH_TOKEN` and set `SPARKDASH_ALLOW_OPEN_REMOTE=0`; use an authenticated
+   front door (Tailscale Serve / authenticated reverse proxy) where possible. Firewall-only
+   exposure is not allowed.
 
 ## 3. Repository topology
 

@@ -43,9 +43,8 @@ services:
       # SSH_IDENTITY_FILE to the path inside the container.
       # - ${HOME}/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
     environment:
-      # Secure default: host-networked service listens only on loopback.
-      # See docs/REMOTE-ACCESS.md; direct non-loopback binds fail closed.
-      - BIND_HOST=${BIND_HOST:-127.0.0.1}
+      # Listen on all host interfaces by default; configure SPARKDASH_TOKEN for remote access.
+      - BIND_HOST=${BIND_HOST:-0.0.0.0}
       - SPARKDASH_TOKEN=${SPARKDASH_TOKEN:-}
       - SPARKDASH_ALLOW_OPEN_REMOTE=${SPARKDASH_ALLOW_OPEN_REMOTE:-1}
       - PORT=5555

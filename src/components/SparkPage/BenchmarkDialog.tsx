@@ -89,6 +89,7 @@ function formatTtft(ms: number): string {
   return `${Math.round(ms)}ms`;
 }
 
+/** Effective per-stream throughput over the whole concurrent cell window. */
 /**
  * Build a plain-text benchmark summary for the clipboard.
  * Format: "<model> | decode tok/s results:" header, then one line per

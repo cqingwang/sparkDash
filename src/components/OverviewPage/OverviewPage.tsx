@@ -66,7 +66,7 @@ function MiniStat({
     <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-[10px] tracking-wide text-muted">{label}</span>
       <span
-        className={`font-tabular text-[13px] ${
+        className={`font-tabular text-[10px] ${
           wrap
             ? "whitespace-normal break-words leading-snug [overflow-wrap:anywhere]"
             : "truncate"
@@ -236,7 +236,7 @@ function SparkCard({
               label={
                 spark.kind === "host" || (spark.metrics.cpu?.temperature ?? 0) > 0
                   ? "GPU"
-                  : "Temperature"
+                  : "GPU"
               }
               value={displayTemp}
               max={temperatureUnit === "fahrenheit" ? 212 : 100}

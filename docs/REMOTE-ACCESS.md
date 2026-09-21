@@ -1,6 +1,6 @@
 # Remote access
 
-sparkDash includes administrative actions such as credential changes, benchmarks, updates, and power controls. Its application API does not authenticate direct clients in this release, so the server binds to `127.0.0.1` and refuses non-loopback startup.
+sparkDash includes administrative actions such as credential changes, benchmarks, updates, and power controls. The default listener is `0.0.0.0`; configure `SPARKDASH_TOKEN` for remote access and set `SPARKDASH_ALLOW_OPEN_REMOTE=0` to fail closed when the token is missing.
 
 ## Safest path: local browser or SSH tunnel
 
@@ -10,30 +10,30 @@ On the sparkDash host:
 docker compose up --build -d
 ```
 
-Open `http://127.0.0.1:5555` locally. From another machine, create a tunnel:
+Open `http://127.0.0.1:5555` locally. To keep the service loopback-only, set `BIND_HOST=127.0.0.1`. From another machine, create a tunnel:
 
 ```bash
 ssh -N -L 5555:127.0.0.1:5555 user@sparkdash-host
 ```
 
-Then open `http://127.0.0.1:5555` on the client. The dashboard remains loopback-only on the server.
+Then open `http://127.0.0.1:5555` on the client.
 
 ## Shared remote access
 
-Keep `BIND_HOST=127.0.0.1` and publish the loopback service through one of these authenticated front doors:
+For a reverse-proxy or Tailscale deployment, keep `BIND_HOST=127.0.0.1` and publish the loopback service through one of these authenticated front doors:
 
 - an HTTPS reverse proxy that requires identity before proxying HTTP and WebSocket traffic;
 - Tailscale Serve with tailnet identity/access policy.
 
 The front door must proxy both `/api/*` and `/ws`, preserve WebSocket upgrades, and require authentication for every path. TLS without authentication is not sufficient.
 
-Direct `BIND_HOST=0.0.0.0` requires `SPARKDASH_TOKEN`. Without a token, remote bind fails closed for mutations and WebSocket telemetry. A firewall-only or “trusted LAN” deployment is not a supported substitute.
+Direct `BIND_HOST=0.0.0.0` should use `SPARKDASH_TOKEN`. Set `SPARKDASH_ALLOW_OPEN_REMOTE=0` to make the token mandatory; a firewall-only or “trusted LAN” deployment is not a supported substitute.
 
 ## Existing Docker installations
 
 Previous Compose files exposed `http://<host-ip>:5555`. After upgrading:
 
-1. Leave `BIND_HOST` unset (or set it to `127.0.0.1`).
+1. Leave `BIND_HOST` unset for the new `0.0.0.0` default, or set it to `127.0.0.1` for loopback-only access.
 2. Recreate the service: `docker compose up --build -d`.
 3. Use the SSH tunnel above immediately, or configure an authenticated reverse proxy/Tailscale Serve.
 

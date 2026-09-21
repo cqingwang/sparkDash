@@ -239,7 +239,7 @@ Env (optional): `POLL_INTERVAL_TAILSCALE` (default `30000`), `TAILSCALE_PROBE_TI
 git clone https://github.com/MiaAI-Lab/sparkDash.git
 cd sparkDash
 
-# Production (Docker; loopback-only by default)
+# Production (Docker; listens on all interfaces by default)
 docker compose up --build -d
 
 # Or development (host, with hot reload)
@@ -247,16 +247,18 @@ npm install
 npm run dev
 ```
 
-- **Docker**: open **http://127.0.0.1:5555** on the host (arm64 image, auto-restart, host mounts for GPU/metrics access)
+- **Docker**: open **http://127.0.0.1:5555** on the host, or `http://<host-ip>:5555` from the LAN (arm64 image, auto-restart, host mounts for GPU/metrics access)
 - **Dev**: Vite on **http://localhost:5173** (proxies API/WS to Express)
 
-For another computer, keep the server on loopback and use an SSH tunnel:
+For another computer, the default `BIND_HOST=0.0.0.0` exposes the service on the host LAN address. Configure `SPARKDASH_TOKEN`; for fail-closed remote access also set `SPARKDASH_ALLOW_OPEN_REMOTE=0`.
+
+If the service must remain loopback-only, set `BIND_HOST=127.0.0.1` and use an SSH tunnel:
 
 ```bash
 ssh -N -L 5555:127.0.0.1:5555 user@sparkdash-host
 ```
 
-Then open `http://127.0.0.1:5555` on that computer. For shared access, use an authenticated TLS reverse proxy, Tailscale Serve, or set `BIND_HOST=0.0.0.0` **and** `SPARKDASH_TOKEN`. Direct LAN bind without a token fails closed. Previous `http://<host-ip>:5555` installs must migrate.
+Then open `http://127.0.0.1:5555` on that computer.
 
 For development with Docker (source-mounted, HMR):
 ```bash
@@ -370,7 +372,7 @@ sparkDash/
 | PUT | `/api/settings` | Update global settings |
 | WS | `/ws` | Real-time metrics stream |
 
-There is no application authentication on the HTTP/WebSocket API. sparkDash therefore binds to loopback and refuses direct LAN binding. Use an SSH tunnel, authenticated TLS reverse proxy, or Tailscale Serve; see [Remote access](./docs/REMOTE-ACCESS.md).
+Remote HTTP/WebSocket access uses `SPARKDASH_TOKEN` when configured. Set `SPARKDASH_ALLOW_OPEN_REMOTE=0` to refuse non-loopback startup without that token; see [Remote access](./docs/REMOTE-ACCESS.md).
 
 `/api/fleet-energy` samples the configured fleet independently every two seconds. It estimates
 each node as GPU board draw + a CPU utilization model (5.2–65 W) + 23 W of memory/network/base
@@ -404,7 +406,7 @@ Copy `.env.example` to `.env` if needed:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BIND_HOST` | `127.0.0.1` | HTTP and WebSocket listen address. Non-loopback bind requires `SPARKDASH_TOKEN`. |
+| `BIND_HOST` | `0.0.0.0` | HTTP and WebSocket listen address. Set `SPARKDASH_TOKEN` for remote access. |
 | `SPARKDASH_TOKEN` | _(empty)_ | Bearer token required for mutations and remote telemetry when not on loopback. |
 | `PORT` | `5555` | HTTP + WebSocket listen port |
 | `LLM_PORT` | `8888` | Default LLM probe port |
@@ -430,9 +432,8 @@ Copy `.env.example` to `.env` if needed:
 | `SSH_CONTROL_PERSIST_SECONDS` | `60` | Reuse authenticated SSH transports for remote collectors. Set to `0` to disable multiplexing. |
 | `FLEET_ENERGY_JSON_PATH` | `config/fleet-energy.json` | Rolling fleet-energy persistence path |
 
-> The listener and both Compose files default to `127.0.0.1`. Existing Docker users who opened
-> `http://<host-ip>:5555` must migrate to an SSH tunnel, authenticated reverse proxy, Tailscale
-> Serve, or `BIND_HOST=0.0.0.0 SPARKDASH_TOKEN=...`. Recovery:
+> The listener and both Compose files default to `0.0.0.0`. Configure `SPARKDASH_TOKEN` and set
+> `SPARKDASH_ALLOW_OPEN_REMOTE=0` to fail closed without authentication. Loopback recovery:
 > `BIND_HOST=127.0.0.1 docker compose up -d --force-recreate`.
 
 ### Adding a unit

@@ -18,7 +18,7 @@ export function evaluateStartupPreflight(input) {
       );
     } else {
       errors.push(
-        `Remote bind ${input.bindHost} requires SPARKDASH_TOKEN. Keep BIND_HOST=127.0.0.1, or set SPARKDASH_TOKEN and use an SSH tunnel, authenticated TLS reverse proxy, or Tailscale Serve.`
+        `Remote bind ${input.bindHost} requires SPARKDASH_TOKEN. Configure the token, or explicitly set BIND_HOST=127.0.0.1 for loopback-only access.`
       );
     }
   }

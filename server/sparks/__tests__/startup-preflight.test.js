@@ -39,11 +39,11 @@ test("startup preflight permits loopback and fails closed on direct LAN binding"
   assert.equal(authed.authMode, "bearer");
 });
 
-test("Compose files default to loopback and do not hard-code 0.0.0.0", async () => {
+test("Compose files default to all interfaces", async () => {
   const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
   for (const file of ["docker-compose.yml", "docker-compose.dev.yml"]) {
     const text = await readFile(join(root, file), "utf8");
-    assert.match(text, /BIND_HOST=\$\{BIND_HOST:-127\.0\.0\.1\}/);
-    assert.equal(text.includes("BIND_HOST=0.0.0.0"), false);
+    assert.match(text, /BIND_HOST=\$\{BIND_HOST:-0\.0\.0\.0\}/);
+    assert.equal(text.includes("BIND_HOST=\$\{BIND_HOST:-127.0.0.1\}"), false);
   }
 });

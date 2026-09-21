@@ -29,7 +29,7 @@ services:
     # (otherwise local VRAM falls back to minute-old config/gpu-memory.json).
     pid: host
     environment:
-      - BIND_HOST=${BIND_HOST:-127.0.0.1}
+      - BIND_HOST=${BIND_HOST:-0.0.0.0}
       - SPARKDASH_ALLOW_OPEN_REMOTE=${SPARKDASH_ALLOW_OPEN_REMOTE:-1}
       - PORT=5555
       - LLM_PORT=8888
