@@ -6,19 +6,33 @@
 # library/node via public.ecr.aws — Docker Hub (docker.io) often resolves
 # to IPv6; Sparks with no IPv6 route fail auth.docker.io with
 # "network is unreachable". ECR public is the same official image, IPv4-first.
+# DEBIAN_MIRROR: the Sparks' international egress to deb.debian.org is slow
+# enough that apt-get update can hang for minutes on a cache-less build; a
+# domestic mirror makes the layer finish in seconds. Plain HTTP is deliberate —
+# the slim image ships no CA roots for the mirror's chain, and apt still
+# verifies every package against the signed Release file. Pass
+# --build-arg DEBIAN_MIRROR=http://deb.debian.org to use the stock host.
+ARG DEBIAN_MIRROR=http://mirrors.aliyun.com
 ARG NODE_IMAGE=public.ecr.aws/docker/library/node:22-bookworm-slim
 FROM ${NODE_IMAGE} AS builder
+
+ARG DEBIAN_MIRROR
 
 WORKDIR /app
 
 # Install build deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN for f in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
+      if [ -f "$f" ]; then sed -i "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}/debian|g" "$f"; fi; \
+    done \
+    && apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ make python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy package files and install (retry — npm in Docker can flake with
-# "Exit handler never called!" on a single long ci run)
-COPY package.json package-lock.json* ./
+# "Exit handler never called!" on a single long ci run).
+# .npmrc must land before npm ci: it pins the domestic registry, without which
+# the Sparks' slow international egress makes npm ci crawl instead of fail.
+COPY package.json package-lock.json* .npmrc ./
 RUN npm ci --no-audit --no-fund \
   || (echo "npm ci failed once — retrying…" && npm cache clean --force && npm ci --no-audit --no-fund)
 
@@ -41,8 +55,13 @@ RUN npm prune --omit=dev --no-audit --no-fund \
 # ============================================================
 FROM ${NODE_IMAGE}
 
+ARG DEBIAN_MIRROR
+
 # SSH client + sshpass for remote Sparks; util-linux provides nsenter for host GPU/net
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN for f in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
+      if [ -f "$f" ]; then sed -i "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}/debian|g" "$f"; fi; \
+    done \
+    && apt-get update && apt-get install -y --no-install-recommends \
     openssh-client sshpass procps util-linux iproute2 \
     && rm -rf /var/lib/apt/lists/*
 

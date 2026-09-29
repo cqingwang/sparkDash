@@ -3,18 +3,26 @@
 # ============================================================
 
 # See Dockerfile: avoid docker.io IPv6 auth failures on Sparks.
+# DEBIAN_MIRROR: see Dockerfile — deb.debian.org is slow from the Sparks.
+ARG DEBIAN_MIRROR=http://mirrors.aliyun.com
 ARG NODE_IMAGE=public.ecr.aws/docker/library/node:22-bookworm-slim
 FROM ${NODE_IMAGE}
+
+ARG DEBIAN_MIRROR
 
 WORKDIR /app
 
 # SSH + sshpass + util-linux (nsenter) + build deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN for f in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
+      if [ -f "$f" ]; then sed -i "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}/debian|g" "$f"; fi; \
+    done \
+    && apt-get update && apt-get install -y --no-install-recommends \
     openssh-client sshpass procps util-linux iproute2 gcc g++ make python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package files and install
-COPY package.json package-lock.json* ./
+# Copy package files and install. .npmrc pins the domestic registry — see
+# Dockerfile for why it must be present before npm ci.
+COPY package.json package-lock.json* .npmrc ./
 RUN npm ci
 
 # Copy source (will be overridden by volume mount)
