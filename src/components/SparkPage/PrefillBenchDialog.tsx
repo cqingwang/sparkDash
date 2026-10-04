@@ -19,6 +19,7 @@ import {
   formatContextSize,
   parseContextSize,
 } from "../../shared/prefillBench.js";
+import { formatDuration } from "../../shared/formatDuration";
 import { formatLlmBaseUrl } from "../../shared/llmTarget.js";
 
 interface PrefillBenchDialogProps {
@@ -33,6 +34,10 @@ interface PrefillBenchDialogProps {
   shareImage?: boolean;
   /** Unit display name for the share-card header. */
   sparkName?: string | null;
+  /** Probe backend id for the share card's engine chip. */
+  engine?: string | null;
+  /** Probe exposure/auth posture for the share-card chip. */
+  posture?: { label: string; level: "ok" | "warn" | "danger" } | null;
 }
 
 function useEscape(onClose: () => void, enabled: boolean) {
@@ -55,15 +60,6 @@ function useBodyScrollLock(locked: boolean) {
       document.body.style.overflow = prev;
     };
   }, [locked]);
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)} s`;
-  const m = Math.floor(s / 60);
-  const rem = s - m * 60;
-  return `${m}m ${rem.toFixed(0)}s`;
 }
 
 function statusLabel(status: PrefillBenchJob["status"]): string {
@@ -158,6 +154,8 @@ export function PrefillBenchDialog({
   remoteTarget = null,
   shareImage = false,
   sparkName = null,
+  engine = null,
+  posture = null,
 }: PrefillBenchDialogProps) {
   const [selected, setSelected] = useState<number[]>(() => defaultSelected(contextLength));
   const [customDraft, setCustomDraft] = useState("");
@@ -634,6 +632,8 @@ export function PrefillBenchDialog({
                       llmPort: benchPort,
                       modelId,
                       sparkName,
+                      engine,
+                      posture,
                       remoteHost: remoteTarget?.host ?? null,
                     })
                   }

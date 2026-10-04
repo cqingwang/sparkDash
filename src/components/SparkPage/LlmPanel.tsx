@@ -12,7 +12,9 @@ import {
 import { BenchmarkDialog } from "./BenchmarkDialog";
 import { PrefillBenchDialog } from "./PrefillBenchDialog";
 import { LlmDailyChart } from "./LlmDailyChart";
+import { LlmTokenTotals } from "./LlmTokenTotals";
 import { parseLlmTargetInput } from "../../shared/llmTarget.js";
+import { backendLabel } from "../../shared/llmBackends.js";
 import { LlmTrendChart } from "./LlmTrendChart";
 
 interface LlmPanelProps {
@@ -271,22 +273,13 @@ function LlmLaunchers({
 
 /** Backend badge — neutral surfaces with a single accent dot. No blue/purple. */
 function BackendBadge({ backend }: { backend: string | null }) {
-  if (!backend) return <span className="text-xs text-muted">No backend</span>;
-
-  const labels: Record<string, string> = {
-    vllm: "vLLM",
-    "llama.cpp": "llama.cpp",
-    sglang: "sgLang",
-    ds4: "ds4",
-    exl3: "EXL3",
-    q27: "q27",
-    tensorfold: "TensorFold",
-  };
+  const label = backendLabel(backend);
+  if (!label) return <span className="text-xs text-muted">No backend</span>;
 
   return (
     <span className="llm-badge">
       <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-      {labels[backend] || backend}
+      {label}
     </span>
   );
 }
@@ -679,6 +672,7 @@ export function LlmPanel({
             onRemotePrefill={openRemotePrefill}
           />
           <LlmDailyChart sparkId={sparkId} llmPort={llmPort} />
+          <LlmTokenTotals sparkId={sparkId} llmPort={llmPort} />
         </div>
       ) : (
         <div className="space-y-3">
@@ -713,7 +707,7 @@ export function LlmPanel({
           </div>
           <div
             className="flex items-center justify-between"
-            title="Tokens/sec while the engine is reading the prompt and building KV cache — before the first output token. Opening a saved chat in the UI does not hit the GPU; send (or regenerate) so the history is sent as the prompt. Prefix-cache hits do little compute, so this can stay ~0. Long cold prefills show here until decode starts."
+            title="Prompt tokens/sec taken in during the last poll window — cache-served + computed; the rows below split that total into the two parts. Opening a saved chat in the UI does not hit the GPU; send (or regenerate) so the history is sent as the prompt. Cached prefill does little GPU work; uncached prefill is what builds KV cache."
           >
             <span className="text-xs text-muted">Prefill tok/s</span>
             <div className="flex items-center gap-2">
@@ -995,6 +989,7 @@ export function LlmPanel({
             onRemoteDecode={openRemoteDecode}
             onRemotePrefill={openRemotePrefill}
           />
+          <LlmTokenTotals sparkId={sparkId} llmPort={llmPort} />
         </div>
       )}
 
@@ -1007,6 +1002,8 @@ export function LlmPanel({
         remoteTarget={remoteTarget}
         shareImage={shareImage}
         sparkName={sparkName ?? null}
+        engine={remoteTarget ? null : llm?.backend ?? null}
+        posture={remoteTarget ? null : llm?.posture ?? null}
       />
       <PrefillBenchDialog
         open={prefillBenchOpen}
@@ -1018,6 +1015,8 @@ export function LlmPanel({
         remoteTarget={remoteTarget}
         shareImage={shareImage}
         sparkName={sparkName ?? null}
+        engine={remoteTarget ? null : llm?.backend ?? null}
+        posture={remoteTarget ? null : llm?.posture ?? null}
       />
     </Panel>
   );
