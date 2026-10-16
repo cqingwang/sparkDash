@@ -6,6 +6,9 @@
 # library/node via public.ecr.aws — Docker Hub (docker.io) often resolves
 # to IPv6; Sparks with no IPv6 route fail auth.docker.io with
 # "network is unreachable". ECR public is the same official image, IPv4-first.
+# Keep the digest pinned: deploy.sh uses the cached image and does not pull a
+# mutable tag on every build. Fetch the pinned digest deliberately with
+# --pull-base when the cache is missing.
 # DEBIAN_MIRROR: the Sparks' international egress to deb.debian.org is slow
 # enough that apt-get update can hang for minutes on a cache-less build; a
 # domestic mirror makes the layer finish in seconds. Plain HTTP is deliberate —
@@ -13,7 +16,7 @@
 # verifies every package against the signed Release file. Pass
 # --build-arg DEBIAN_MIRROR=http://deb.debian.org to use the stock host.
 ARG DEBIAN_MIRROR=http://mirrors.aliyun.com
-ARG NODE_IMAGE=public.ecr.aws/docker/library/node:22-bookworm-slim
+ARG NODE_IMAGE=public.ecr.aws/docker/library/node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
 # The builder runs on the build machine's own architecture: its output (the
 # frontend bundle and pure-JS node_modules) is the same for every target, and
 # the bundler's native binding (rolldown) crashes under QEMU emulation.

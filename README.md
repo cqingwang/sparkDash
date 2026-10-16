@@ -1109,7 +1109,7 @@ Choice is stored in `localStorage`.
 | `npm run docker:rebuild` | `docker compose up --build -d` |
 | `npm run docker:dev` | Dev Compose |
 | `npm run docker:dev:build` | Dev Compose with rebuild |
-| `./deploy.sh` | Recreate container; `--build`, `--frontend` flags |
+| `./deploy.sh` | Recreate container; `--build` rebuilds without pulling the cached Node base image, `--pull-base` explicitly fetches the pinned base image |
 
 ---
 
