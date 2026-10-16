@@ -1,6 +1,6 @@
 # Remote access
 
-sparkDash includes administrative actions such as credential changes, benchmarks, updates, and power controls. The default listener is `0.0.0.0`; configure `SPARKDASH_TOKEN` for remote access and set `SPARKDASH_ALLOW_OPEN_REMOTE=0` to fail closed when the token is missing.
+sparkDash includes administrative actions such as credential changes, benchmarks, updates, and power controls. A non-loopback bind should use `SPARKDASH_TOKEN`; set `SPARKDASH_ALLOW_OPEN_REMOTE=0` when a tokenless remote bind must fail closed.
 
 ## Safest path: local browser or SSH tunnel
 
@@ -10,30 +10,32 @@ On the sparkDash host:
 docker compose up --build -d
 ```
 
-Open `http://127.0.0.1:5555` locally. To keep the service loopback-only, set `BIND_HOST=127.0.0.1`. From another machine, create a tunnel:
+Open `http://127.0.0.1:5555` locally. From another machine, create a tunnel:
 
 ```bash
 ssh -N -L 5555:127.0.0.1:5555 user@sparkdash-host
 ```
 
-Then open `http://127.0.0.1:5555` on the client.
+Then open `http://127.0.0.1:5555` on the client. The dashboard remains loopback-only on the server.
 
 ## Shared remote access
 
-For a reverse-proxy or Tailscale deployment, keep `BIND_HOST=127.0.0.1` and publish the loopback service through one of these authenticated front doors:
+Keep `BIND_HOST=127.0.0.1` and publish the loopback service through one of these authenticated front doors, or use the token-protected direct bind described below:
 
 - an HTTPS reverse proxy that requires identity before proxying HTTP and WebSocket traffic;
 - Tailscale Serve with tailnet identity/access policy.
 
 The front door must proxy both `/api/*` and `/ws`, preserve WebSocket upgrades, and require authentication for every path. TLS without authentication is not sufficient.
 
-Direct `BIND_HOST=0.0.0.0` should use `SPARKDASH_TOKEN`. Set `SPARKDASH_ALLOW_OPEN_REMOTE=0` to make the token mandatory; a firewall-only or “trusted LAN” deployment is not a supported substitute.
+Tailscale Serve needs nothing more. Behind a reverse proxy on a custom domain, list that domain in `SPARKDASH_ALLOWED_HOSTS` (comma-separated); a loopback bind refuses other sites and names it does not recognise, and the refusal page says which name to add.
+
+Direct `BIND_HOST=0.0.0.0` should use `SPARKDASH_TOKEN`. Without a token, it is open by default; set `SPARKDASH_ALLOW_OPEN_REMOTE=0` to fail closed. A firewall-only or “trusted LAN” deployment is not a supported substitute.
 
 ## Existing Docker installations
 
 Previous Compose files exposed `http://<host-ip>:5555`. After upgrading:
 
-1. Leave `BIND_HOST` unset for the new `0.0.0.0` default, or set it to `127.0.0.1` for loopback-only access.
+1. Leave `BIND_HOST` unset for the default LAN bind, configure `SPARKDASH_TOKEN`, or explicitly set it to `127.0.0.1` for loopback-only access.
 2. Recreate the service: `docker compose up --build -d`.
 3. Use the SSH tunnel above immediately, or configure an authenticated reverse proxy/Tailscale Serve.
 

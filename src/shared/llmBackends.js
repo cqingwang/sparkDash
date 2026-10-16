@@ -8,11 +8,14 @@
 export const BACKEND_LABELS = Object.freeze({
   vllm: "vLLM",
   "llama.cpp": "llama.cpp",
-  sglang: "sgLang",
+  sglang: "SGLang",
+  lmstudio: "LM Studio",
+  ollama: "Ollama",
   ds4: "ds4",
   exl3: "EXL3",
   q27: "q27",
   tensorfold: "TensorFold",
+  freetoken: "FreeToken",
 });
 
 /**
