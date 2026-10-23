@@ -18,10 +18,10 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { AuthMode, SparkSnapshot } from "../../api/types";
-import { ACTIVITY_ID, ENERGY_ID, OVERVIEW_ID, SHOWCASE_ID, TEMPS_ID, TOKENS_ID, benchId, idToPath, toolId } from "../../constants";
+import { isWorkerSpark } from "../../api/sparkRole";
+import { ACTIVITY_ID, COST_ID, ENERGY_ID, OVERVIEW_ID, SHOWCASE_ID, TEMPS_ID, TOKENS_ID, benchId, idToPath } from "../../constants";
 import { BENCH_TYPES } from "../bench/benchCatalog";
-import { TOOL_TYPES } from "../tools/toolsCatalog";
-import { BoltIcon, ChevronDownIcon, GearIcon, GithubIcon, GlobeIcon, GridIcon, ListIcon, MicroscopeIcon, PanelLeftIcon, PlusIcon, SearchIcon, TerminalIcon, ThermometerIcon, TokensIcon, XLogoIcon } from "../ui/icons";
+import { BoltIcon, ChevronDownIcon, CoinsIcon, GearIcon, GithubIcon, GlobeIcon, GridIcon, ListIcon, PanelLeftIcon, PlusIcon, SearchIcon, TerminalIcon, ThermometerIcon, TokensIcon, XLogoIcon } from "../ui/icons";
 import { OpenAccessChip } from "../OpenAccessChip";
 import { ThemeSwitch } from "../ThemeSwitch";
 import { isThrottling, railSubLabel } from "./sparkSummary";
@@ -37,9 +37,6 @@ interface AppSidebarProps {
   /** Benchmark type whose page is showing, if any. */
   benchType?: string | null;
   onSelectBench?: (type: string) => void;
-  /** Tool type whose page is showing, if any. */
-  toolType?: string | null;
-  onSelectTool?: (type: string) => void;
   connected: boolean;
   /** Poll interval in ms for the footer caption. */
   refreshInterval?: number | null;
@@ -70,6 +67,22 @@ function dotClass(spark: SparkSnapshot): string {
   if (!spark.online) return "sdot sdot--off";
   if (isThrottling(spark)) return "sdot sdot--warn";
   return "sdot";
+}
+
+/**
+ * Strata exposes explicit activity flags when it has no current decode window.
+ * A zero decode rate during either state is not an idle throughput reading, so
+ * keep the rail from presenting it as a measured 0.0 tok/s.
+ */
+function sidebarSubLabel(spark: SparkSnapshot): string {
+  if (!spark.online) return railSubLabel(spark);
+  if (isWorkerSpark(spark)) return "worker";
+  const llm = Array.isArray(spark.metrics.llm) ? spark.metrics.llm.find((entry) => entry.available) : null;
+  if (llm?.backend === "strata" && !(Number.isFinite(llm.generationTps) && llm.generationTps > 0)) {
+    if (llm.prefillActive) return "prefilling";
+    if (llm.decodeActive) return "decoding";
+  }
+  return railSubLabel(spark);
 }
 
 /**
@@ -145,7 +158,7 @@ function RailSpark({
         <i className={dotClass(spark)} aria-hidden />
         <span className="rail-item__name">{spark.name}</span>
       </a>
-      <span className="rail-item__sub">{railSubLabel(spark)}</span>
+      <span className="rail-item__sub">{sidebarSubLabel(spark)}</span>
     </div>
   );
 }
@@ -161,8 +174,6 @@ export function AppSidebar({
   onOpenSearch,
   benchType = null,
   onSelectBench,
-  toolType = null,
-  onSelectTool,
   connected,
   refreshInterval,
   authMode = null,
@@ -181,23 +192,6 @@ export function AppSidebar({
     setBenchOpen((open) => {
       try {
         localStorage.setItem("sparkdash.sidebar.benchOpen", open ? "0" : "1");
-      } catch {
-        /* private mode */
-      }
-      return !open;
-    });
-
-  const [toolsOpen, setToolsOpen] = useState(() => {
-    try {
-      return localStorage.getItem("sparkdash.sidebar.toolsOpen") !== "0";
-    } catch {
-      return true;
-    }
-  });
-  const toggleTools = () =>
-    setToolsOpen((open) => {
-      try {
-        localStorage.setItem("sparkdash.sidebar.toolsOpen", open ? "0" : "1");
       } catch {
         /* private mode */
       }
@@ -306,7 +300,7 @@ export function AppSidebar({
                   <i className={dotClass(s)} aria-hidden />
                   <span className="rail-item__name">{s.name}</span>
                 </a>
-                <span className="rail-item__sub">{railSubLabel(s)}</span>
+                <span className="rail-item__sub">{sidebarSubLabel(s)}</span>
               </div>
             ))}
           </nav>
@@ -336,6 +330,15 @@ export function AppSidebar({
           >
             <TokensIcon className="h-4 w-4" />
             <span className="rail-item__name">Token totals</span>
+          </a>
+          <a
+            href={idToPath(COST_ID)}
+            className={`rail-item ${activeId === COST_ID ? "is-active" : ""}`}
+            onClick={inApp(() => onSelect(COST_ID))}
+            aria-current={activeId === COST_ID ? "page" : undefined}
+          >
+            <CoinsIcon className="h-4 w-4" />
+            <span className="rail-item__name">Cost compare</span>
           </a>
           <a
             href={idToPath(ENERGY_ID)}
@@ -375,37 +378,6 @@ export function AppSidebar({
           </a>
         </nav>
       </div>
-
-      {onSelectTool ? (
-        <div>
-          <button
-            type="button"
-            className="rail-label rail-label--toggle"
-            onClick={toggleTools}
-            aria-expanded={toolsOpen || toolType != null}
-            aria-controls="rail-tools"
-          >
-            <span>Tools</span>
-            <ChevronDownIcon className={`h-3 w-3 transition-transform ${toolsOpen || toolType != null ? "" : "-rotate-90"}`} />
-          </button>
-          <nav className="rail-list" id="rail-tools" aria-label="Tools" hidden={!(toolsOpen || toolType != null)}>
-            {TOOL_TYPES.map((t) => (
-              <div key={t.id}>
-                <a
-                  href={idToPath(toolId(t.id))}
-                  className={`rail-item rail-item--compact ${toolType === t.id ? "is-active" : ""}`}
-                  onClick={inApp(() => onSelectTool(t.id))}
-                  aria-current={toolType === t.id ? "page" : undefined}
-                  title={t.blurb}
-                >
-                  <MicroscopeIcon className="h-3.5 w-3.5" />
-                  <span className="rail-item__name">{t.label}</span>
-                </a>
-              </div>
-            ))}
-          </nav>
-        </div>
-      ) : null}
 
       {onSelectBench ? (
         <div>
