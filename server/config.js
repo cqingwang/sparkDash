@@ -33,6 +33,9 @@ const METRICS_HISTORY_JSON_PATH =
 /** Alert rule switches, channel settings (no URLs — those are in the secrets store) and the firing set; mode 0600. */
 const ALERTS_JSON_PATH =
   process.env.ALERTS_JSON_PATH || path.join(ROOT, "config", "alerts.json");
+/** Harness helper attaches (URLs and routes; bearer tokens stay in the secrets store). */
+const OCCUPANCY_HELPERS_JSON_PATH =
+  process.env.OCCUPANCY_HELPERS_JSON_PATH || path.join(ROOT, "config", "occupancy-helpers.json");
 /** Last good hosted-model price catalog (Cost compare page offline fallback). */
 const MODEL_PRICES_JSON_PATH =
   process.env.MODEL_PRICES_JSON_PATH || path.join(ROOT, "config", "model-prices.json");
@@ -78,7 +81,7 @@ const POLL_INTERVAL_LLM = parseInt(process.env.POLL_INTERVAL_LLM || "2000", 10);
 const POLL_INTERVAL_COMFY = parseInt(process.env.POLL_INTERVAL_COMFY || "2000", 10);
 // Tailnet membership changes slowly; each poll is an SSH round-trip.
 const POLL_INTERVAL_TAILSCALE = parseInt(process.env.POLL_INTERVAL_TAILSCALE || "30000", 10);
-// Kernel journal scan for NV_ERR_NO_MEMORY — not on the 2s GPU loop.
+// Incremental kernel error reads after backfill, independent of the GPU poll interval.
 const POLL_INTERVAL_NVERR = parseInt(process.env.POLL_INTERVAL_NVERR || "60000", 10);
 // dmon -c 1 -d 1 blocks ~1s; default 2s avoids stacking with in-flight guards
 const POLL_INTERVAL_BANDWIDTH = parseInt(process.env.POLL_INTERVAL_BANDWIDTH || "2000", 10);
@@ -219,6 +222,7 @@ export {
   FLEET_ENERGY_MONTHLY_JSON_PATH,
   METRICS_HISTORY_JSON_PATH,
   ALERTS_JSON_PATH,
+  OCCUPANCY_HELPERS_JSON_PATH,
   MODEL_PRICES_JSON_PATH,
   MODEL_PRICES_FETCH,
   LLM_PROBE_TIMEOUT_MS,

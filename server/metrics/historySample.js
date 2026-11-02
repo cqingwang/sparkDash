@@ -32,7 +32,10 @@ function isDefaultCpu(cpu) {
  */
 export function memoryReading(snapshot, isFresh = () => true) {
   const m = snapshot?.metrics || {};
-  const unified = snapshot?.kind !== "host";
+  // A macOS host shares one pool too (see memoryModelFor in src/shared/vramBreakdown.ts): judging
+  // it as discrete would compute its free memory as total minus the GPU's share alone, hiding
+  // everything the CPU side holds and charting a Mac near OOM as comfortable.
+  const unified = snapshot?.kind !== "host" || snapshot?.platform === "darwin";
   const um = m.unifiedMemory;
   if (unified && isFresh("memory") && finite(um?.total) && um.total > 0) {
     const used = Math.max(0, finite(um.gpuUsed) ? um.gpuUsed : 0) +
@@ -132,6 +135,8 @@ export function extractSample(snapshot, isFresh = () => true) {
     m.llm.forEach((entry, i) => {
       const port = Number.isInteger(entry?.port) ? entry.port : ports[i];
       if (!Number.isInteger(port) || !ports.includes(port) || entry?.available !== true) return;
+      // The endpoint answered but its stats could not be read: a gap, not a zero rate.
+      if (entry.measurementValid === false) return;
       set(llmKey(port, "genTps"), entry.generationTps);
       set(llmKey(port, "prefillTps"), entry.prefillTps);
       if (finite(entry.kvCacheUsage)) {

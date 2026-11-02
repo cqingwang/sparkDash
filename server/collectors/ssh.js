@@ -5,7 +5,7 @@
  * Uses execFile + argv arrays (no shell interpolation of user/host/cmd).
  * Password auth uses sshpass -e (password via env), not -p on the command line.
  */
-import { powershellCommand } from "./windowsMetrics.js";
+import { decodeClixml, powershellCommand } from "./windowsMetrics.js";
 import { execFile } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
@@ -18,10 +18,21 @@ import {
 import { isAllowedTargetHost, isValidSshUser, normalizeSshPort } from "../validate.js";
 import { llmProbeHost } from "./llmHost.js";
 
+/** A decoded PowerShell error keeps its first line or two; the rest is position noise. */
+const CLIXML_MESSAGE_MAX = 300;
+
 // Detect sshpass without shelling out to `which` on every cold call —
 // checking PATH entries directly is faster and avoids spawning a shell.
 let _sshpassAvailable = null;
 const _multiplexStates = new Map();
+// Windows OpenSSH keeps a handle to every process started over a connection until that
+// connection closes (PowerShell/Win32-OpenSSH#2138), so a master kept alive by polling pins
+// cmd.exe/conhost.exe/powershell.exe handles for days and leaks gigabytes of the monitored
+// PC's kernel memory. A Windows unit therefore moves to a new socket every hour: the retired
+// master has no sessions left, exits once ControlPersist runs out, and Windows frees what it
+// held. Reconnecting per command is no fix there — it leaks on every new connection too
+// (#2476) and brings back #73's session churn.
+const WINDOWS_MASTER_MAX_AGE_MS = 60 * 60 * 1000;
 // Keep the private directory short even on macOS, where TMPDIR can already
 // consume most of a Unix socket's 104-byte path limit.
 const _controlDir = fs.mkdtempSync("/tmp/sparkdash-ssh-");
@@ -53,9 +64,12 @@ export function sshMultiplexConfig(spark, targetHost, user, auth, password, port
   ensureControlDir();
   const identityFile = process.env.SSH_IDENTITY_FILE || "default";
   const sshPort = normalizeSshPort(port) ?? 22;
-  const isolationKey = [spark.id, user, targetHost, String(sshPort), auth || "key", identityFile, password || ""].join(
-    "\0"
-  );
+  const isolation = [spark.id, user, targetHost, String(sshPort), auth || "key", identityFile, password || ""];
+  // One socket per hour on Windows; everything else keeps its socket for as long as it polls.
+  if (spark.platform === "windows") {
+    isolation.push(`master-${Math.floor(Date.now() / WINDOWS_MASTER_MAX_AGE_MS)}`);
+  }
+  const isolationKey = isolation.join("\0");
   const digest = crypto
     .createHash("sha256")
     .update(_controlSalt)
@@ -81,11 +95,12 @@ export async function ensureMultiplexReady(config, establish) {
   if (!config) return;
 
   const now = Date.now();
-  let state = _multiplexStates.get(config.key);
-  if (state && now >= state.expiresAt) {
-    _multiplexStates.delete(config.key);
-    state = null;
+  // Forget readiness for sockets that have run out. A rotated Windows unit leaves one entry
+  // behind per hour; pruning the whole map keeps it bounded no matter how many units rotate.
+  for (const [key, stale] of _multiplexStates) {
+    if (now >= stale.expiresAt) _multiplexStates.delete(key);
   }
+  let state = _multiplexStates.get(config.key);
 
   if (!state) {
     state = {
@@ -270,6 +285,21 @@ export function sshCommandSpec(spark, opts = {}) {
  * ~/.ssh/authorized_keys for administrators.
  */
 export function explainSshFailure(message, { windows = false } = {}) {
+  // PowerShell serialises its error stream as CLIXML when stderr is redirected, so a
+  // failed command on a Windows unit otherwise arrives as "#< CLIXML <Objs …>".
+  const clixml = decodeClixml(message);
+  if (clixml != null) {
+    const decoded = clixml
+      ? clixml.length > CLIXML_MESSAGE_MAX
+        ? `${clixml.slice(0, CLIXML_MESSAGE_MAX)}…`
+        : clixml
+      : "PowerShell reported a failure with no message on its error stream.";
+    // A standard Windows account is not entitled to the CIM/WMI classes the collector
+    // reads, which is the common cause and is not visible in the message itself.
+    return /access is denied|access denied|permissiondenied|unauthorizedaccess/i.test(clixml)
+      ? `${decoded} (this usually means the Windows account sparkDash signs in as may not read WMI/CIM: grant it read access to the root\\cimv2 namespace, or use an account that has it.)`
+      : decoded;
+  }
   if (/is not recognized as an internal or external command/i.test(message)) {
     return `${message} (this looks like a Windows host: set the Unit type to "Windows PC with an NVIDIA GPU" in the unit's settings.)`;
   }

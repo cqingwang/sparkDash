@@ -100,6 +100,17 @@ test("an offline unit is a gap, not zeros", () => {
   assert.equal(extractSample(gb10Snapshot({ online: false })), null);
 });
 
+test("an LLM poll whose stats could not be read is a gap, not a zero rate", () => {
+  const snap = gb10Snapshot();
+  snap.metrics.llm = [{ available: true, measurementValid: false, generationTps: 0, prefillTps: 0, kvCacheUsage: 0.4 }];
+  const v = extractSample(snap);
+  assert.equal(v[llmKey(8888, "genTps")], undefined);
+  assert.equal(v[llmKey(8888, "prefillTps")], undefined);
+  assert.equal(v[llmKey(8888, "kvUsage")], undefined);
+  snap.metrics.llm[0].measurementValid = true;
+  assert.equal(extractSample(snap)[llmKey(8888, "genTps")], 0, "a readable idle engine is a real zero");
+});
+
 test("failed, stale or unavailable readings are skipped, never recorded as zero", () => {
   const snap = gb10Snapshot();
   snap.metrics.gpu = { temperature: 0, usage: 0, power: { draw: 0, limit: 0 }, vram: { used: 0, total: 0 } };
@@ -140,6 +151,29 @@ test("memory headroom follows the VRAM breakdown semantics", () => {
     }),
     { usedMB: 10, freeMB: 70 }
   );
+});
+
+test("a macOS host is judged as unified, so its free memory is not total minus the GPU share", () => {
+  // A Mac is configured `kind: "host"` but shares one pool, and its vram.used carries only the
+  // GPU's share. Judged as discrete, free would be 512 GB − 71 GB = 441 GB while the CPU side
+  // holds 114 GB, so a Mac close to OOM would chart as having plenty of headroom.
+  const mac = {
+    kind: "host",
+    platform: "darwin",
+    metrics: {
+      unifiedMemory: { total: 524_288, gpuUsed: 71_400, cpuUsed: 118_256, available: 334_632 },
+      gpu: { temperature: 50, usage: 20, power: { draw: 15 }, vram: { used: 71_400, total: 524_288, available: 334_632 } },
+    },
+  };
+  assert.deepEqual(memoryReading(mac), { usedMB: 189_656, freeMB: 334_632 });
+
+  // A non-Apple host keeps the discrete rule: free = total − used.
+  const pc = {
+    kind: "host",
+    platform: "linux",
+    metrics: { gpu: { temperature: 40, usage: 1, power: { draw: 30 }, vram: { used: 90_000, total: 97_887, available: 500_000 } } },
+  };
+  assert.deepEqual(memoryReading(pc), { usedMB: 90_000, freeMB: 7_887 });
 });
 
 test("network uses the primary interface, else the sum of shown interfaces", () => {
