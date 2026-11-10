@@ -1,13 +1,17 @@
+// First on purpose: imports are evaluated in order, and config.js, settings.js
+// and the bench modules read process.env while they load.
+import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import dotenv from "dotenv";
 import { SparkRegistry } from "./sparks/SparkRegistry.js";
 import { resolveFrontendDir, FRONTEND_MISSING_MESSAGE } from "./frontendDir.js";
 import { SparkMonitor } from "./sparks/SparkMonitor.js";
+import { LlmProbe } from "./collectors/LlmProbe.js";
+import { detectLlmMovedToWorker, reconcileMovedEngineHints } from "./sparks/LlmMovedToWorker.js";
 import { sshExec } from "./collectors/ssh.js";
 import { comfyCancelJob } from "./collectors/comfyActions.js";
 import {
@@ -16,16 +20,22 @@ import {
   createRateLimiter,
   assertAllowedTarget,
   validateDecodeBudget,
+  validateDecodeContextBudget,
   validatePrefillBudget,
 } from "./validate.js";
 import { authStatus, authorizeUpgrade, createAuthMiddleware, createHostGuardMiddleware, isLoopbackBind, setTailscaleName } from "./auth.js";
 import { inspectHealth } from "./health.js";
 import { getSettings, updateSettings, loadSettings } from "./settings.js";
+import { MqttPublisher } from "./mqtt/MqttPublisher.js";
+import { createOccupancyRuntime } from "./occupancy/runtime.js";
+import { formatContextSize, parseContextSize } from "../src/shared/prefillBench.js";
+import { PREFILL_RESERVE_TOKENS, sizeFitsContext } from "../src/shared/contextFit.js";
 import { broadcastForLanIp, effectiveMac, normalizeMac, sendWol } from "./wol.js";
 import { remoteShutdownCommand, spawnLocalShutdown } from "./shutdown.js";
 import { GpuClockManager } from "./gpuclock/GpuClockManager.js";
-import { registerGpuClockRoutes } from "./gpuclock/routes.js";
+import { registerGpuClockFleetRoute, registerGpuClockRoutes } from "./gpuclock/routes.js";
 import {
+  backendForPort,
   decodeBenchManager,
   DECODE_BENCH_DEFAULTS,
   normalizeConcurrencies,
@@ -58,34 +68,45 @@ import { ALERTS_JSON_PATH, FLEET_ENERGY_JSON_PATH, FLEET_ENERGY_MONTHLY_JSON_PAT
 import { createAlertsRuntime, registerAlertRoutes } from "./alerts/runtime.js";
 import { FleetEnergyTracker } from "./energy/FleetEnergyTracker.js";
 import { EventLog } from "./events/EventLog.js";
+import { planListenRetry } from "./listenRetry.js";
 import { UnitHistory } from "./metrics/UnitHistory.js";
 import { createUnitHistoryRuntime, registerUnitHistoryRoutes } from "./metrics/UnitHistoryRuntime.js";
 import { LauncherStore } from "./llmlaunch/LauncherStore.js";
-import { LauncherManager } from "./llmlaunch/LauncherManager.js";
+import { LauncherManager, defaultExec } from "./llmlaunch/LauncherManager.js";
+import { discoverModelCandidates } from "./models/discovery.js";
 import { ToolEvalStore } from "./tooleval/ToolEvalStore.js";
 import { ToolEvalManager } from "./tooleval/ToolEvalManager.js";
 import { registerToolEvalRoutes } from "./tooleval/routes.js";
+import { registerApiKeysRoutes } from "./apiKeys/routes.js";
 import { benchEvent } from "./events/eventFormat.js";
 import {
   createFleetEnergyRuntime,
   registerFleetEnergyRoute,
 } from "./energy/FleetEnergyRuntime.js";
+import { createPowerMeterRuntime } from "./powermeter/runtime.js";
 import { testSparkConnectivity } from "./connectivity.js";
+import {
+  beginRuntimeControl,
+  assertMacControlSpark,
+  readRuntimeControl,
+  runtimeControlHttpStatus,
+} from "./collectors/MacRuntimeControl.js";
 import { TailscaleProbe } from "./collectors/TailscaleProbe.js";
 import { inspectStartupPreflight, logStartupPreflight } from "./startupPreflight.js";
+import { readServerVersion } from "./serverVersion.js";
 import { PROMETHEUS_CONTENT_TYPE, metricsEntries, renderPrometheusMetrics } from "./prometheus.js";
-
-dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, "..");
+const SERVER_VERSION = readServerVersion(ROOT);
 
-// Listen on all interfaces by default so the dashboard remains reachable from the
-// LAN. A non-loopback bind without SPARKDASH_TOKEN stays open unless
-// SPARKDASH_ALLOW_OPEN_REMOTE=0 makes startup fail closed; see
-// docs/REMOTE-ACCESS.md.
-const BIND_HOST = process.env.BIND_HOST || "0.0.0.0";
+// Default to loopback. A non-loopback bind without SPARKDASH_TOKEN stays OPEN —
+// anyone who can reach the port can mutate settings and power units — unless
+// SPARKDASH_ALLOW_OPEN_REMOTE=0, which makes startup fail closed instead. Prefer
+// SPARKDASH_TOKEN, an SSH tunnel, an authenticated reverse proxy, or Tailscale
+// Serve (docs/REMOTE-ACCESS.md).
+const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
 const PORT = parseInt(process.env.PORT || "5555", 10);
 const LLM_PORT = parseInt(process.env.LLM_PORT || "8888", 10);
 const COMFY_PORT = parseInt(process.env.COMFY_PORT || "8188", 10);
@@ -291,6 +312,7 @@ function consumeBenchStartQuota(req, res) {
 // ─── Spark registry ──────────────────────────────────────
 const registry = new SparkRegistry();
 const inferenceActivity = new InferenceActivityStore();
+const occupancy = createOccupancyRuntime({ listSparks: () => registry.sparks });
 
 const fleetEnergyTracker = new FleetEnergyTracker({
   nodeIds: registry.sparkIds,
@@ -304,6 +326,13 @@ const eventLog = new EventLog({
   // The Activity page browses history, so keep far more than the Overview card shows.
   max: 2000,
 });
+
+// ─── MQTT bridge (opt-in, Settings → MQTT) ───────────────
+// Republishes the event stream and per-Spark availability to a broker the
+// user configures. Best-effort: a down broker drops messages rather than
+// ever blocking a poll loop (the client retries on its own in the meantime).
+const mqttPublisher = new MqttPublisher({ getSettings });
+eventLog.subscribe((event) => mqttPublisher.publishEvent(event));
 
 // ─── Unit history (so a fresh page can draw the last hours at once) ─────
 // GPU: a dense ~2 s series for 8 h (Overview/Spark charts) and a minute-resolution series for
@@ -436,16 +465,29 @@ function startAllMonitors() {
 
 /** Snapshots in registry tab order (not Map insertion order). */
 function orderedSnapshots() {
+  const conversations = occupancy.projection().bySpark;
   return registry.sparkIds
     .map((id) => monitors.get(id))
     .filter(Boolean)
-    .map((m) => m.snapshot());
+    .map((m) => {
+      const snap = m.snapshot();
+      return { ...snap, conversations: conversations[snap.id] || {} };
+    });
 }
+
+// Wall power from external meters (smart strips, PDUs, Home Assistant), recorded by the
+// fleet-energy tracker beside its estimate. Opt-in: inert unless config/power-meters.json exists.
+const powerMeters = createPowerMeterRuntime({
+  tracker: fleetEnergyTracker,
+  listUnits: () => registry.sparks,
+  recordEvent,
+});
 
 const fleetEnergyRuntime = createFleetEnergyRuntime({
   tracker: fleetEnergyTracker,
   orderedSnapshots,
   monitors,
+  wallReadings: powerMeters.wallReadings,
 });
 
 const unitHistoryRuntime = createUnitHistoryRuntime({
@@ -479,6 +521,7 @@ app.get("/api/auth/status", createHostGuardMiddleware(), (req, res) => {
   res.json(authStatus(req));
 });
 app.use(createAuthMiddleware());
+occupancy.register(app);
 
 /** Fleet event log, newest first. Query: limit, sparkId, sinceId. */
 app.get("/api/events", (req, res) => {
@@ -539,7 +582,7 @@ app.post("/api/restart", (_req, res) => {
 });
 
 app.get("/api/health", (_req, res) => {
-  res.json(inspectHealth(process.env.BIND_HOST || "0.0.0.0"));
+  res.json({ ...inspectHealth(process.env.BIND_HOST || "0.0.0.0"), version: SERVER_VERSION });
 });
 
 function clientKey(req) {
@@ -548,6 +591,7 @@ function clientKey(req) {
 
 // ─── REST API ────────────────────────────────────────────
 registerFleetEnergyRoute(app, fleetEnergyTracker);
+powerMeters.register(app);
 registerLlmTokenTotalsRoute(app, llmTokenLedger);
 app.get("/api/model-prices", createModelPricesHandler());
 registerAlertRoutes(app, alertsRuntime);
@@ -704,6 +748,8 @@ app.delete("/api/sparks/:id", (req, res) => {
     launcherStatusCache.delete(req.params.id);
     unitHistory.remove(req.params.id);
     toolEvalManager.removeSpark(req.params.id);
+    // Clear its retained status/metrics topics so MQTT subscribers stop seeing it.
+    mqttPublisher.removeUnit(req.params.id);
     recordEvent({
       type: "spark.removed",
       severity: "info",
@@ -748,6 +794,8 @@ app.put("/api/settings", (req, res) => {
       }
       restartBroadcast();
     }
+    // MQTT broker URL / prefix / enablement changed: reconnect (a no-op otherwise).
+    mqttPublisher.applySettings();
     res.json({ ...newSettings, inferenceActivityEnabled: inferenceActivity.enabled });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -770,7 +818,34 @@ registerUnitHistoryRoutes(app, {
 app.get("/api/sparks/:id/metrics", (req, res) => {
   const monitor = monitors.get(req.params.id);
   if (!monitor) return res.status(404).json({ error: "Spark not found" });
-  res.json(monitor.snapshot());
+  res.json(withMovedEngineHint(monitor.snapshot()));
+});
+
+app.get("/api/sparks/:id/runtime-control", async (req, res) => {
+  const spark = registry.getSpark(req.params.id);
+  const blocked = assertMacControlSpark(spark);
+  if (blocked) return res.status(blocked.status).json(blocked.body);
+  try {
+    const result = await readRuntimeControl(spark);
+    res.status(runtimeControlHttpStatus(result)).json(result);
+  } catch (err) {
+    res.status(503).json({ state: "unavailable", reason: err.message, error: err.message, serving: null, targets: [] });
+  }
+});
+
+app.post("/api/sparks/:id/runtime-control/:action", async (req, res) => {
+  if (!allowDestructive(principalKey(req)) || !allowGlobalDestructive(clientKey(req))) {
+    return rejectLimited(res, "Too many runtime control requests; try again shortly");
+  }
+  const spark = registry.getSpark(req.params.id);
+  const blocked = assertMacControlSpark(spark);
+  if (blocked) return res.status(blocked.status).json(blocked.body);
+  try {
+    const result = await beginRuntimeControl(spark, req.params.action, req.body || {});
+    res.status(result.state === "ready" && result.busy ? 202 : runtimeControlHttpStatus(result)).json(result);
+  } catch (err) {
+    res.status(503).json({ state: "unavailable", reason: err.message, error: err.message, serving: null, targets: [] });
+  }
 });
 
 // Test SSH + LLM connectivity for a registered Spark.
@@ -818,6 +893,16 @@ registerToolEvalRoutes(app, {
   rejectLimited,
 });
 
+// ─── API Keys (opt-in, Settings → API Keys) ───
+// Read-only views of LiteLLM virtual keys through a host-side bridge on a unix socket
+// (SPARKDASH_APIKEYS_BRIDGE_SOCKET / SPARKDASH_APIKEYS_BRIDGE_TOKEN). 404 while the setting is off.
+registerApiKeysRoutes(app, {
+  getSettings,
+  allow: createRateLimiter(60, 60_000),
+  principalKey,
+  rejectLimited,
+});
+
 // ─── LLM launchers: register a directory with start.sh / stop.sh and run it ───
 // The API only ever executes the registered start/stop script names inside the
 // registered directory (see llmlaunch/validate.js); it never runs a free-form command.
@@ -861,6 +946,17 @@ app.post("/api/sparks/:id/llm-launchers", (req, res) => {
   const result = launcherStore.add(spark.id, req.body);
   if (!result.ok) return res.status(400).json({ error: result.error });
   res.status(201).json({ launcher: result.launcher });
+});
+
+// Registered before the ":lid" route below, which would otherwise take "order" for a launcher id.
+app.put("/api/sparks/:id/llm-launchers/order", (req, res) => {
+  const spark = launcherContext(req, res);
+  if (!spark) return;
+  const order = req.body?.order;
+  if (!Array.isArray(order) || !order.every((id) => typeof id === "string")) {
+    return res.status(400).json({ error: "body.order must be an array of model ids" });
+  }
+  res.json({ launchers: launcherStore.reorder(spark.id, order) });
 });
 
 app.put("/api/sparks/:id/llm-launchers/:lid", async (req, res) => {
@@ -920,6 +1016,47 @@ for (const action of ["start", "stop", "attach"]) {
     res.status(202).json({ job: result.job });
   });
 }
+
+// ─── Model discovery: "Discover on this Spark" ───────────
+// Scans the unit sparkDash itself runs on (LOCAL-UNIT ONLY — the same local-
+// identity rule the power actions follow; remote units are never scanned).
+// The scan runs the FIXED templates from models/discovery.js through the
+// launcher's host-user drop (refuses root); no text from this request — and
+// nothing the browser can influence at all — reaches a shell string.
+// Cached 15 s so reopening the dialog does not re-scan the filesystem.
+
+const MODEL_DISCOVERY_CACHE_TTL_MS = 15_000;
+/** @type {{ at: number, payload: object } | null} */
+let modelDiscoveryCache = null;
+
+app.get("/api/model-launcher/discover", async (req, res) => {
+  try {
+    if (!allowLaunchProbe(principalKey(req))) {
+      return rejectLimited(res, "Too many discovery requests; try again shortly");
+    }
+    const spark = registry.sparks.find((s) => s.isLocal);
+    if (!spark) {
+      return res.status(400).json({
+        error: "Discovery scans the Spark that runs this dashboard. Add this machine as a Spark first.",
+      });
+    }
+    if (spark.platform === "windows") {
+      return res.status(400).json({ error: "Model discovery is not supported on Windows PCs" });
+    }
+    const now = Date.now();
+    if (modelDiscoveryCache && now - modelDiscoveryCache.at < MODEL_DISCOVERY_CACHE_TTL_MS) {
+      return res.json(modelDiscoveryCache.payload);
+    }
+    const payload = await discoverModelCandidates({
+      execHost: (cmd, timeoutMs) => defaultExec(spark, cmd, timeoutMs),
+      sshUser: spark.ssh?.user,
+    });
+    modelDiscoveryCache = { at: now, payload };
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err?.message || String(err) });
+  }
+});
 
 // Cancel a ComfyUI job (running interrupt and/or pending dequeue).
 app.post("/api/sparks/:id/comfy/cancel", async (req, res) => {
@@ -1400,7 +1537,9 @@ app.post("/api/sparks/:id/llm/bench", async (req, res) => {
 
   // Resolve model id for this port from live snapshot when possible
   let modelId = req.body?.modelId || null;
-  if (!modelId && !target.custom && monitor) {
+  let backend = null;
+  let contextLength = null;
+  if (!target.custom && monitor) {
     const snap = monitor.snapshot();
     const llmList = Array.isArray(snap?.metrics?.llm) ? snap.metrics.llm : [];
     const portIndex = ports.indexOf(port);
@@ -1408,7 +1547,27 @@ app.post("/api/sparks/:id/llm/bench", async (req, res) => {
       (portIndex >= 0 ? llmList[portIndex] : null) ||
       llmList.find((m) => m?.available) ||
       llmList[0];
-    modelId = llm?.modelId || null;
+    if (!modelId) modelId = llm?.modelId || null;
+    // Never infer sampler compatibility from a model name, the request body, or another port's
+    // engine: resolved from this port's own snapshot entry (see backendForPort).
+    backend = backendForPort(llmList, port);
+    contextLength = Number(llm?.contextLength) > 0 ? Number(llm.contextLength) : null;
+  }
+
+  // Deep-context start: every stream carries `contextTokens` of prompt before it decodes.
+  const contextTokens = parseContextSize(req.body?.contextTokens) || 0;
+  if (contextTokens > 0) {
+    try {
+      validateDecodeContextBudget(normalizeConcurrencies(req.body?.concurrencies), contextTokens);
+    } catch (err) {
+      return res.status(err.status || 429).json({ error: err.message });
+    }
+    const maxTokens = Number(req.body?.maxTokens ?? 400);
+    if (!sizeFitsContext(contextTokens, contextLength, PREFILL_RESERVE_TOKENS + maxTokens, 1)) {
+      return res.status(400).json({
+        error: `${formatContextSize(contextTokens)} of context plus ${maxTokens} reply tokens does not fit the model context (${contextLength.toLocaleString()} tokens)`,
+      });
+    }
   }
 
   try {
@@ -1419,11 +1578,13 @@ app.post("/api/sparks/:id/llm/bench", async (req, res) => {
       lanIp: llmProbeHost(spark),
       port,
       modelId,
+      backend,
       concurrencies: req.body?.concurrencies,
       maxTokens: req.body?.maxTokens,
       promptType: req.body?.promptType,
       temperature: req.body?.temperature,
       thinking: req.body?.thinking,
+      contextTokens: req.body?.contextTokens,
       debug: benchDebug,
       apiKey: target.apiKey,
       host: target.host,
@@ -1797,6 +1958,17 @@ app.delete("/api/sparks/:id/llm/quality-bench", (req, res) => {
   res.json({ success: true });
 });
 
+app.delete("/api/sparks/:id/llm/quality-bench/history/:benchId", (req, res) => {
+  const spark = registry.getSpark(req.params.id);
+  if (!spark) return res.status(404).json({ error: "Spark not found" });
+  const result = qualityBenchManager.deleteRun(spark.id, req.params.benchId);
+  if (!result.ok && result.reason === "running") {
+    return res.status(409).json({ error: "Cancel the run before deleting it" });
+  }
+  if (!result.ok) return res.status(404).json({ error: "Benchmark not found" });
+  res.json({ success: true });
+});
+
 app.get("/api/sparks/:id/llm/quality-bench/:benchId", (req, res) => {
   const spark = registry.getSpark(req.params.id);
   if (!spark) return res.status(404).json({ error: "Spark not found" });
@@ -1810,9 +1982,18 @@ app.get("/api/sparks/:id/llm/quality-bench/:benchId", (req, res) => {
 app.delete("/api/sparks/:id/llm/quality-bench/:benchId", (req, res) => {
   const spark = registry.getSpark(req.params.id);
   if (!spark) return res.status(404).json({ error: "Spark not found" });
-  const job = qualityBenchManager.cancel(spark.id, req.params.benchId);
-  if (!job) return res.status(404).json({ error: "Benchmark not found" });
-  res.json(job);
+  const job = qualityBenchManager.getJob(req.params.benchId);
+  if (!job || job.sparkId !== spark.id) {
+    return res.status(404).json({ error: "Benchmark not found" });
+  }
+  // This route only cancels a run in flight. A finished run used to come back as a
+  // 200 with its own record, which read as a successful cancel while nothing changed.
+  if (job.status !== "running") {
+    return res.status(409).json({
+      error: "This run has already finished; delete it from the history instead",
+    });
+  }
+  res.json(qualityBenchManager.cancel(spark.id, req.params.benchId));
 });
 
 /**
@@ -2127,11 +2308,24 @@ app.post("/api/sparks/:id/shutdown", async (req, res) => {
   }
 });
 
+// One manager for the fleet batch and the per-unit routes: it serialises work per
+// Spark, so a fleet apply cannot run while another cap change is in flight for it.
+const gpuClockManager = new GpuClockManager();
+
+// Fleet-wide batch first (a plain Sparks-suffix path, like shutdown-all).
+registerGpuClockFleetRoute(app, {
+  manager: gpuClockManager,
+  registry,
+  recordEvent,
+  allowChange: (req) => allowDestructive(principalKey(req)) && allowGlobalDestructive(clientKey(req)),
+  rejectLimited,
+});
+
 // GPU clock cap (nvidia-smi -lgc, optionally kept across reboots by a systemd service).
 // Needs root on the unit: the local unit runs as root in the host mount namespace, a
 // remote one uses `sudo -n` as its SSH user. Same auth and limiters as power actions.
 registerGpuClockRoutes(app, {
-  manager: new GpuClockManager(),
+  manager: gpuClockManager,
   registry,
   recordEvent,
   allowRead: (req) => allowTest(principalKey(req)),
@@ -2197,7 +2391,7 @@ app.get("/metrics", (_req, res) => {
   // res.end, not res.send: send() reorders the media type parameters; keep the
   // header exactly as the exposition format spells it.
   res.setHeader("Content-Type", PROMETHEUS_CONTENT_TYPE);
-  res.end(renderPrometheusMetrics(entries));
+  res.end(renderPrometheusMetrics(entries) + powerMeters.renderPrometheus());
 });
 
 // ─── Static files (built frontend) ───────────────────────
@@ -2267,7 +2461,8 @@ function buildSnapshotPayload(sparks = orderedSnapshots()) {
   const payload = {
     type: "snapshot",
     generatedAt: Date.now(),
-    sparks,
+    // A head whose engine answers on its worker carries the hint; every other snapshot is untouched.
+    sparks: movedEngineHints.size ? sparks.map(withMovedEngineHint) : sparks,
     refreshInterval: getSettings().pollIntervalMs,
   };
   // Only while alerts are on: the key's absence tells the UI to derive its own.
@@ -2301,12 +2496,99 @@ function broadcastPayload(payload) {
 }
 
 /**
+ * Hand the fleet to the MQTT bridge: entries with per-domain provenance,
+ * exactly what /metrics renders. Built only when MQTT is on, so the default
+ * (off) install pays nothing per tick; the publisher itself resends a topic
+ * only when its value changed.
+ */
+function publishMqttFleet() {
+  if (!getSettings().mqttEnabled) return;
+  mqttPublisher.publishFleet(metricsEntries(registry.sparkIds.map((id) => monitors.get(id))));
+}
+
+/**
  * Broadcast now instead of on the next tick.
  * Used after a user action (manual refresh / hermes check / update) so the
  * UI reflects the result right away.
  */
 function forceBroadcast() {
   broadcastPayload(buildSnapshotPayload());
+  publishMqttFleet();
+}
+
+// ─── #271: an engine that moved to the worker ────────────
+// Workers are not polled, so a recipe that starts rank 0 on the worker leaves the head's LLM
+// ports unanswered with no explanation. Probe the workers only while the head is down, throttled,
+// and surface a hint. Never write config, never swap roles.
+const movedEngineHints = new Map();
+const movedEngineProbeState = new Map();
+// The hint each head last raised an event for, kept apart from the live hint so that a worker
+// answering intermittently does not re-announce the same move every probe window.
+const movedEngineAnnounced = new Map();
+let movedEngineWatchTimer = null;
+let movedEngineRefreshing = false;
+
+async function probeWorkerLlm(workerSpark, port) {
+  if (!workerSpark) return null;
+  const probe = new LlmProbe(workerSpark, port);
+  try {
+    return await probe.probe();
+  } catch {
+    return null;
+  } finally {
+    probe.dispose?.();
+  }
+}
+
+async function refreshMovedEngineHints() {
+  // Probes are awaited one after another, each a fresh detection with its own timeout, so a
+  // head with several paired workers and ports can outlast the 30 s interval. Without this the
+  // timer would stack overlapping runs that re-probe and fight over the throttle state.
+  if (movedEngineRefreshing) return;
+  movedEngineRefreshing = true;
+  try {
+    // Workers report no `llmPorts` in their snapshot (LLM polling is off for them by design);
+    // the registry keeps the configured ports the detector needs to probe.
+    const sparks = orderedSnapshots().map((s) => {
+      const cfg = registry.getSpark(s.id);
+      return cfg?.llmPorts?.length ? { ...s, llmPorts: cfg.llmPorts } : s;
+    });
+    await reconcileMovedEngineHints({
+      sparks,
+      hints: movedEngineHints,
+      probeState: movedEngineProbeState,
+      announced: movedEngineAnnounced,
+      detect: (head) =>
+        detectLlmMovedToWorker({
+          head,
+          sparks,
+          probe: (workerSnap, port) => probeWorkerLlm(registry.getSpark(workerSnap.id), port),
+          state: movedEngineProbeState,
+        }),
+      onEvent: (hint, headId) =>
+        recordEvent({
+          sparkId: headId,
+          type: "llm.moved_to_worker",
+          severity: "warn",
+          message: hint.message,
+        }),
+    });
+  } finally {
+    movedEngineRefreshing = false;
+  }
+}
+
+function startMovedEngineWatch() {
+  if (movedEngineWatchTimer) return;
+  movedEngineWatchTimer = setInterval(() => void refreshMovedEngineHints(), 30_000);
+  movedEngineWatchTimer.unref?.();
+  setTimeout(() => void refreshMovedEngineHints(), 5_000).unref?.();
+}
+
+/** Attach the current hint (if any) to a head's snapshot. Display-only. */
+function withMovedEngineHint(snap) {
+  const hint = movedEngineHints.get(snap?.id);
+  return hint ? { ...snap, llmMovedTo: hint } : snap;
 }
 
 function startBroadcast() {
@@ -2317,6 +2599,8 @@ function startBroadcast() {
     // payload carries the alerts this very snapshot produced. They run whether
     // or not a dashboard is open.
     alertsRuntime.tick(sparks);
+    // MQTT subscribers are not dashboards, so publish before the no-client skip below.
+    publishMqttFleet();
     // Nobody is listening: skip serialising every unit's snapshot. A client that
     // connects later gets a fresh one from the connection handler.
     if (wss.clients.size === 0) return;
@@ -2336,11 +2620,13 @@ function restartBroadcast() {
 
 // ─── Start ───────────────────────────────────────────────
 loadSettings();
+mqttPublisher.applySettings();
 const startupPreflight = inspectStartupPreflight(BIND_HOST);
 logStartupPreflight(startupPreflight, BIND_HOST, PORT);
 
 if (!startupPreflight.fatal) {
   startBroadcast();
+  startMovedEngineWatch();
   if (isLoopbackBind(BIND_HOST)) {
     // Learn this machine's MagicDNS name (via the host namespace in Docker) so Tailscale Serve
     // needs no SPARKDASH_ALLOWED_HOSTS entry; re-checked now and then in case tailscaled starts later.
@@ -2349,18 +2635,44 @@ if (!startupPreflight.fatal) {
     learnTailscaleName();
     setInterval(learnTailscaleName, 10 * 60 * 1000).unref();
   }
-  // A failed listen (port in use, address not available) must end the process.
-  // The WebSocket server's own error handler only logs it, and the broadcast
-  // timer would keep a process alive that never serves a request.
+  // A failed bind must be diagnosed, not blindly fatal. On a unit whose
+  // container restarts unconditionally, binding the Tailscale address can win
+  // the race against tailscale0 and fail with EADDRNOTAVAIL; exiting under
+  // `node --watch` parks the process until a file changes, which kept the
+  // dashboard dead forever after a fast reboot. Transient bind errors are
+  // retried for ~2 minutes (policy in server/listenRetry.js); everything
+  // else (port in use, bad address) is a real misconfiguration and still
+  // ends the process — the WebSocket server's own handler only logs, and the
+  // broadcast timer would keep a process alive that never serves a request.
+  let listenAttempts = 0;
+  let listenRetryTimer = null;
   server.on("error", (err) => {
     if (server.listening) {
       console.error("[sparkDash] server error:", err?.message);
       return;
     }
+    const plan = planListenRetry({ code: err?.code, attempt: listenAttempts });
+    if (plan.retry && !listenRetryTimer) {
+      listenAttempts = plan.attempt + 1;
+      console.log(`[sparkDash] ${BIND_HOST} is not bindable yet (${err?.code}); retry ${listenAttempts} in ${plan.delayMs / 1000}s — waiting for the network interface.`);
+      listenRetryTimer = setTimeout(() => {
+        listenRetryTimer = null;
+        // No callback here: listen(..., cb) adds cb as a fresh once("listening") listener and a
+        // failed bind never consumes it, so passing it per attempt would run the whole startup
+        // block once per attempt on eventual success (and warn about a listener leak at 11).
+        server.listen(PORT, BIND_HOST);
+      }, plan.delayMs);
+      return;
+    }
     console.error(`[sparkDash] cannot listen on ${BIND_HOST}:${PORT}: ${err?.message}`);
     process.exit(1);
   });
-  server.listen(PORT, BIND_HOST, () => {
+  server.once("listening", onListening);
+  server.listen(PORT, BIND_HOST);
+  // Monitors and runtimes start ONLY on a successful bind — never on the
+  // not-listening path. (Declared after the listen call so the source order
+  // stays listen → start, which the occupancy wiring test pins.)
+  function onListening() {
     console.log(`[sparkDash] server listening on http://${BIND_HOST}:${PORT}`);
     console.log(`[sparkDash] WebSocket endpoint ws://${BIND_HOST}:${PORT}/ws`);
     const { authMode } = inspectHealth(BIND_HOST);
@@ -2370,9 +2682,11 @@ if (!startupPreflight.fatal) {
     }
     startAllMonitors();
     alertsRuntime.start();
+    occupancy.start();
     fleetEnergyRuntime.start();
+    powerMeters.start();
     llmTokenRuntime.start();
-  });
+  }
 } else {
   process.exitCode = 1;
 }
@@ -2409,6 +2723,11 @@ async function shutdown(signal) {
   } catch (err) {
     console.error("[sparkDash] failed to flush event log:", err.message);
   }
+  // Publishes the dashboard's offline status and waits (bounded) for the broker's
+  // ack before closing; awaited below alongside the LLM dispatcher close.
+  const mqttStopped = mqttPublisher.stop().catch((err) => {
+    console.error("[sparkDash] failed to stop MQTT publisher:", err.message);
+  });
   try {
     unitHistoryRuntime.stop();
   } catch (err) {
@@ -2420,8 +2739,18 @@ async function shutdown(signal) {
     console.error("[sparkDash] failed to flush LLM daily history:", err.message);
   }
   llmTokenRuntime.stop();
+  try {
+    await occupancy.stop();
+  } catch (err) {
+    console.error("[sparkDash] failed to stop occupancy poller:", err.message);
+  }
+  try {
+    powerMeters.stop();
+  } catch (err) {
+    console.error("[sparkDash] failed to stop power meters:", err.message);
+  }
   const energyPersistenceSucceeded = fleetEnergyRuntime.stop();
-  const streamAgentClosedGracefully = await closeLlmStreamAgent();
+  const [streamAgentClosedGracefully] = await Promise.all([closeLlmStreamAgent(), mqttStopped]);
   if (!streamAgentClosedGracefully) {
     console.warn("[sparkDash] LLM dispatcher close timed out; destroyed open sockets");
   }
